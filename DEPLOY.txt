@@ -1,0 +1,50 @@
+Hotify CF 2.0 cf-ticket deploy kit (VPS, Windows)
+=================================================
+
+Files in this kit (plus private.json you add):
+
+  cf-ticket.exe     ticket signer (single Go binary; /console panel included)
+  run-ticket.bat    foreground launcher (same style as go-harmony run.bat)
+  nssm-ticket.bat   optional: install as Windows service (auto-start)
+  nssm.exe          service installer (if missing, copy from go-harmony folder)
+  README.txt        this file
+
+[One more file needed] private.json -- copy from your AGC project
+(Project settings -> Service account) into THIS folder. ANY filename works,
+content is auto-scanned (must contain a PRIVATE KEY value). Credentials never
+ship inside the zip/git on purpose.
+
+Start
+-----
+Double-click run-ticket.bat. Expect:
+  Starting Hotify CF-Ticket (anonymous, ttl=600s, port 12346)...
+  <date> | [ticket]   | listen 127.0.0.1:12346 (ttl=600s proj=... anonymous)
+
+Panel: open http://127.0.0.1:12346/console in a browser
+(?lang=en for English, ?json=1 for JSON). Local log file: logs\ticket.log.
+
+Tunnel (reuse existing HotifyTunnel, no new process)
+----------------------------------------------------
+1. Edit the config.yml used by your existing cloudflared tunnel, add:
+     - hostname: ticket.<your-domain>
+       service: http://127.0.0.1:12346
+   (keep the final "- service: http_status:404" catch-all line last)
+2. One-time DNS:
+     cloudflared.exe tunnel route dns hotify ticket.<your-domain>
+3. Restart the tunnel (cloudflared does not hot-reload local config):
+     close the tunnel window and re-run tunnel.bat
+   (or: nssm restart HotifyTunnel)
+
+Verify: curl https://ticket.<your-domain>/ -> 3-field JSON
+        (ticket / project_id / expires_at)
+
+Optional hardening
+------------------
+- run-ticket.bat / nssm-ticket.bat env lines: TICKET_RATE_LIMIT_IP=100,
+  TICKET_AUTO_BAN=5 (defaults are 0 = unlimited; see repo README)
+- Cloudflare rate-limit rule on ticket.<your-domain> (real DoS line)
+
+Upgrade
+-------
+Replace cf-ticket.exe, restart (window: re-run bat; service: nssm restart
+HotifyTicketCF).

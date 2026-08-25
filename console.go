@@ -90,6 +90,7 @@ func (ringWriter) Write(p []byte) (int, error) {
 // statsSnapshot 面板/JSON 共用快照（锁内拷出）。
 type statsSnapshot struct {
 	Uptime      string         `json:"uptime"`
+	UptimeDur   time.Duration  `json:"-"` // 面板人性化用（humanDur）
 	Issued      int64          `json:"issued"`
 	IssuedToday int64          `json:"issued_today"`
 	Status      map[int]int64  `json:"status"`
@@ -126,6 +127,7 @@ func takeStatsSnapshot() statsSnapshot {
 	}
 	return statsSnapshot{
 		Uptime:      nowFn().Sub(stats.started).Truncate(time.Second).String(),
+		UptimeDur:   nowFn().Sub(stats.started).Truncate(time.Second),
 		Issued:      stats.issued,
 		IssuedToday: stats.issuedToday,
 		Status:      stats.status,
@@ -187,7 +189,38 @@ func consoleLang(r *http.Request) string {
 	return "zh" // 默认中文（用户主用）
 }
 
-// handleConsole /console（免鉴权直接进）；?json=1 出 JSON；?lang=en 英文。
+// humanDur 顶栏人性化时长（取最高两档）：26h→"1 天 2 小时"，1h3m→"1 小时 3 分"，
+// 2m20s→"2 分 20 秒"，45s→"45 秒"（en：1d 2h / 1h 3m / 2m 20s / 45s）。Duration 原样太机器味。
+func humanDur(d time.Duration, lang string) string {
+	zh := lang == "zh"
+	u := func(n int, z, e string) string {
+		if zh {
+			return strconv.Itoa(n) + " " + z
+		}
+		return strconv.Itoa(n) + e
+	}
+	totalSec := int(d.Seconds())
+	days, hours := totalSec/86400, totalSec%86400/3600
+	mins, secs := totalSec%3600/60, totalSec%60
+	switch {
+	case days > 0:
+		return u(days, "天", "d") + " " + u(hours, "小时", "h")
+	case hours > 0:
+		return u(hours, "小时", "h") + " " + u(mins, "分", "m")
+	case mins > 0:
+		return u(mins, "分", "m") + " " + u(secs, "秒", "s")
+	default:
+		return u(secs, "秒", "s")
+	}
+}
+
+// humanTTL 票期人性化：600s→"10 分钟"/"10 min"；90s→"90 秒"/"90 s"。
+func humanTTL(secs int, lang string) string {
+	if secs%60 == 0 {
+		return humanDur(time.Duration(secs)*time.Second, lang)
+	}
+	return strconv.Itoa(secs) + "s"
+}
 func handleConsole(w http.ResponseWriter, r *http.Request) {
 	snap := takeStatsSnapshot()
 	if r.URL.Query().Get("json") == "1" {
@@ -237,7 +270,7 @@ func consoleHTML(s statsSnapshot, lang string) string {
 <nav class="navbar navbar-expand-md navbar-light">
   <div class="container-xl">
     <h1 class="navbar-brand mb-0 h3">` + c["brand"] + `</h1>
-    <div class="text-secondary">` + c["uptime"] + ` ` + s.Uptime + ` · ` + c["ttl"] + `=` + strconv.Itoa(s.TTL) + `s · ` + mode + ` · <a href="?lang=` + switchLang + `">` + c["switch"] + `</a></div>
+    <div class="text-secondary">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + ` · ` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + ` · ` + mode + ` · <a href="?lang=` + switchLang + `">` + c["switch"] + `</a></div>
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
