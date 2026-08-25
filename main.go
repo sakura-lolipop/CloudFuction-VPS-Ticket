@@ -19,7 +19,7 @@
 //
 //	PRIVATE_JSON / PRIVATE_JSON_FILE  service account key（都不设→扫同目录含 PRIVATE KEY 的 .json）
 //	TICKET_AUTH_TOKEN   名单最小载体：设了=单 token 验证（Bearer 匹配→who:default；不匹配→401）；
-//	                    不设=匿名开放（**产品终态**：默认开放给所有人——滥用走速率治理非身份准入）。
+//	                    不设=匿名开放（产品形态：默认开放，滥用走速率治理；白名单要做再议——缝见 whitelist.md）。
 //	TICKET_TTL_SECONDS  票有效期 1~3600，默认 600（canary 实测 30/300/600 均被华为接受 80000000）
 //	TICKET_RATE_LIMIT_IP     IP 桶每分钟张数（宽，防多开兜底）；默认 0=关
 //	TICKET_RATE_LIMIT_TOKEN  token 桶每分钟张数（紧，per-server）；默认 0=关
