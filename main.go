@@ -29,8 +29,8 @@
 //
 // 响应契约（调用方 internal/pushkit 按 ticket/project_id/expires_at 三字段消费）：
 //
-//	GET/POST /
-//	→ 200 {"ticket": "<PS256 JWT>", "project_id": "...", "expires_at": <unix秒>}
+//	POST /ticket（GET /ticket 说明页；根路径 404=扫描器隐身）
+//	→ 200 {"ticket": "<PS256 JWT>", "project_id": "...", "expires_at": <unix秒>}（POST /ticket）
 //	→ 401 {"error":"unauthorized"}  → 403 {"error":"banned"}（Retry-After 头）
 //	→ 429 {"error":"rate_limited"}  → 500 {"error":"private_json"|"sign"}
 package main
@@ -92,7 +92,7 @@ func main() {
 	log.SetOutput(logOutput)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", handleTicket)
+	mux.HandleFunc("/ticket", handleTicket) // 根路径不挂=404（扫描器 GET / 得"无内容"归档走人，比说明页更隐身+更省）
 	mux.HandleFunc("/console", handleConsole)
 	mux.HandleFunc("/tabler.min.css", handleConsoleCSS)
 	mux.HandleFunc("/hotify-icon.png", handleConsoleIcon)
@@ -292,7 +292,7 @@ func resetGuard() {
 func handleTicket(w http.ResponseWriter, r *http.Request) {
 	// 对抗审 P2：路径精确匹配 + method 白名单——catch-all 让 bot 任意探测路径全 200（RSA 白签
 	// +日志放大+鼓励枚举）。签票口就是根路径，GET/POST/HEAD。
-	if r.URL.Path != "/" {
+	if r.URL.Path != "/ticket" {
 		writeJSON(w, 404, map[string]string{"error": "not found"})
 		return
 	}

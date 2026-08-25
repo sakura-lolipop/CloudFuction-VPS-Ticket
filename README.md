@@ -9,7 +9,7 @@ Hotify CF 2.0 **铸票厂**（VPS 形态）：验 token → 用华为 Service Ac
 ## 契约
 
 ```
-POST /（GET 返回说明页，零 RSA——爬虫不烧签名）
+POST /ticket（GET /ticket=说明页；根 404）
 Authorization: Bearer <TICKET_AUTH_TOKEN>
 
 → 200 {"ticket": "<PS256 JWT>", "project_id": "<本节点 SA 的 project_id>", "expires_at": <unix秒>}
@@ -48,7 +48,7 @@ body: {target, payload, pushOptions}    # 华为 v3 原生格式
      - service: http_status:404
    ```
    DNS 一次性：`cloudflared.exe tunnel route dns hotify ticket.hotify.love`（或 CF 控制台加 CNAME）
-5. **验证**：本机 `curl http://localhost:12346/` → 三字段 JSON；外网 `curl https://ticket.hotify.love/` 同
+5. **验证**：本机 `curl -X POST http://localhost:12346/ticket` → 三字段 JSON；外网 `curl https://ticket.hotify.love/` 同
 6. （可选，DoS 真防线）CF 控制台给 `ticket.hotify.love` 开一条免费限速规则
 
 Linux VPS 等价：`go build` + systemd + 任意反代指到 12346，逻辑相同。
