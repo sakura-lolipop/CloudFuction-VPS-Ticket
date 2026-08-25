@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("/", handleTicket)
 	mux.HandleFunc("/console", handleConsole)
 	mux.HandleFunc("/tabler.min.css", handleConsoleCSS)
+	mux.HandleFunc("/hotify-icon.png", handleConsoleIcon)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true}`)

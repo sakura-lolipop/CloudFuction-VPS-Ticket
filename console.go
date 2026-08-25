@@ -21,6 +21,9 @@ import (
 //go:embed web/tabler.min.css
 var tablerCSS []byte
 
+//go:embed web/hotify-icon.png
+var hotifyIcon []byte
+
 const statsRingSize = 200 // 最近日志行数（面板黑窗容量）
 
 type statsState struct {
@@ -98,6 +101,7 @@ type statsSnapshot struct {
 	Recent      []string       `json:"recent"`
 	TTL         int            `json:"ttl_seconds"`
 	Mode        string         `json:"mode"`
+	ProjectID   string         `json:"project_id"`
 }
 
 type statsIPCount struct {
@@ -124,6 +128,10 @@ func takeStatsSnapshot() statsSnapshot {
 	for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
 		recent[i], recent[j] = recent[j], recent[i] // 最新在顶
 	}
+	proj := "-"
+	if acct, err := loadSA(); err == nil {
+		proj = acct.ProjectID
+	}
 	return statsSnapshot{
 		Uptime:      nowFn().Sub(stats.started).Truncate(time.Second).String(),
 		UptimeDur:   nowFn().Sub(stats.started).Truncate(time.Second),
@@ -135,6 +143,7 @@ func takeStatsSnapshot() statsSnapshot {
 		Recent:      recent,
 		TTL:         ticketTTLSeconds(),
 		Mode:        mode,
+		ProjectID:   proj,
 	}
 }
 
@@ -159,11 +168,17 @@ func handleConsoleCSS(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(tablerCSS)
 }
 
+func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(hotifyIcon)
+}
+
 // consoleCopy i18n 文案（zh 默认 / en；?lang= 切换，照 NEXT-Server /console 的 lang 参数先例）。
 var consoleCopy = map[string]map[string]string{
 	"zh": {
-		"title": "Hotify 铸票台", "brand": "Hotify CF-Ticket",
-		"uptime": "运行", "ttl": "票期", "anon": "匿名", "tokenauth": "token 鉴权",
+		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
+		"uptime": "运行", "ttl": "票期", "anon": "匿名", "tokenauth": "token 鉴权", "project": "项目",
 		"total": "总签发", "today": "今日签发",
 		"ok": "成功 200", "auth": "鉴权 401", "ban": "封禁 403", "limit": "限流 429", "err": "错误 500",
 		"autoban": "自动封禁",
@@ -172,7 +187,7 @@ var consoleCopy = map[string]map[string]string{
 	},
 	"en": {
 		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
-		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "token-auth",
+		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "token-auth", "project": "project",
 		"total": "total issued", "today": "today",
 		"ok": "OK 200", "auth": "ERR 401", "ban": "BAN 403", "limit": "LIMIT 429", "err": "ERR 500",
 		"autoban": "auto-ban",
@@ -242,12 +257,12 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, consoleHTML(snap, consoleLang(r)))
+	fmt.Fprint(w, consoleHTML(snap, consoleLang(r), r.Host))
 }
 
 // consoleHTML Tabler 单页（骨架照 NEXT-Server /console 同款；卡片平铺=row-deck 栅格，
 // 手机 col-6 两列 / 桌面 col-lg-3 四列——Tabler dashboard 标准形态）。
-func consoleHTML(s statsSnapshot, lang string) string {
+func consoleHTML(s statsSnapshot, lang string, host string) string {
 	c := consoleCopy[lang]
 	mode := c["anon"]
 	if s.Mode == "token-auth" {
@@ -284,13 +299,21 @@ func consoleHTML(s statsSnapshot, lang string) string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="5;url=?lang=` + lang + `">
 <title>` + c["title"] + `</title>
+<link rel="icon" type="image/png" href="/hotify-icon.png">
 <link rel="stylesheet" href="/tabler.min.css">
 </head><body class="theme-light">
 <div class="page">
 <nav class="navbar navbar-expand-md navbar-light">
   <div class="container-xl">
-    <h1 class="navbar-brand mb-0 h3">` + c["brand"] + `</h1>
-    <div class="text-secondary">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + ` · ` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + ` · ` + mode + ` · <a href="?lang=` + switchLang + `">` + c["switch"] + `</a></div>
+    <span class="navbar-brand"><img src="/hotify-icon.png" alt="" style="width:2rem;height:2rem;border-radius:.375rem;vertical-align:-.5rem"> ` + c["brand"] + `</span>
+    <div class="d-flex flex-wrap gap-1 align-items-center">
+      <span class="badge bg-blue-lt">` + html.EscapeString(host) + `</span>
+      <span class="badge bg-cyan-lt">` + c["project"] + ` ` + s.ProjectID + `</span>
+      <span class="badge bg-lime-lt">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
+      <span class="badge bg-lime-lt">` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
+      <span class="badge bg-secondary-lt">` + mode + `</span>
+      <a href="?lang=` + switchLang + `" class="btn btn-sm btn-outline-primary ms-2">` + c["switch"] + `</a>
+    </div>
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
