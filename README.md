@@ -41,15 +41,19 @@ body: {target, payload, pushOptions}    # 华为 v3 原生格式
 5. 反代/Tunnel 暴露：Cloudflare Tunnel 加 hostname 指向 8091 即可（证书自动）
 6. 验证：`curl -H "Authorization: Bearer <token>" https://<你的域名>/` → 拿到三字段 JSON
 
-## 鉴权模式（演进中，2026-08-25 裁定）
+## 鉴权与滥用策略（演进中，2026-08-25 设计定稿）
 
-| 阶段 | 机制 | 开启方式 |
+**统一模型**：调用方键三级择一 `who:标签` > `inst:部署uuid`（`X-Hotify-Instance` 头）> `ip:可信IP`（CF-Connecting-IP/RemoteAddr，绝不读客户端自带 XFF）。滥用策略族全查这个键空间：
+
+| 策略 | 语义 | 状态 |
 |---|---|---|
-| **现在** | **匿名开放**：不设 `TICKET_AUTH_TOKEN`，谁都能拿票 | 默认（测试期，配额可控；对齐 CF 滥用响应 defer 裁定） |
-| 过渡 | 单 token | 设 `TICKET_AUTH_TOKEN`（constant-time 比对） |
-| 终态 | 云端 txt 白名单热更 | 一户一 token+标签，参考 `cloud_function_urls.txt` 基建（改 txt 推仓、节点定时拉取热更、VPS+Netlify 共享一份名单）；删行=吊销，旧票活 ≤TTL。⚠️ token 真值不能进公开 txt（届时存哈希或私有仓 raw） |
+| 限速 | 每 key 每分钟 N 张（`TICKET_RATE_LIMIT`，**默认 0=无限制**） | ✅ 已实装（env 可调） |
+| 黑名单 ban | key 进表即拒 | 缝已留：ban txt 云端热更（参考 `cloud_function_urls.txt` 基建），滥用出现时上 |
+| 白名单准入 | 一户一 token → who 标签，删行=吊销（旧票活 ≤TTL） | 缝已留：同 txt 基建，公开推广前上 |
 
-代码留缝：鉴权收敛在 `verifyToken`（演进只改此函数）；`issue ok` 日志带 `who=` 字段位（观察底座）；handler 内滥用防护挂点（限速/封禁的未来插入位，defer 至公开推广前）。
+- **现在：匿名开放**（`TICKET_AUTH_TOKEN` 不设）+ 限速能力待命——测试期配额可控。
+- 三级择一的结构收益：ban ip 时带 instance 头的诚实 Server 不受影响（instance 头=诚实方准白名单通道），裸请求才吃 IP ban。
+- ⚠️ token 真值不能进公开 txt（届时存哈希或私有仓 raw）。
 
 ## 安全边界（诚实版）
 

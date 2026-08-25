@@ -1,25 +1,38 @@
-// CloudFuction-VPS-Ticket —— Hotify CF 2.0 铸票厂（VPS 形态，自包含单二进制）。
+// CloudFuction-VPS-Ticket —— Hotify CF 2.0 铸票厂（VPS 形态，自包含单二进制 cf-ticket）。
 //
-// 干一件事：验 token → 用华为 Service Account 签一张短 exp 的 PS256 JWT（"票"）→ 吐给调用方。
+// 干一件事：用华为 Service Account 签一张短 exp 的 PS256 JWT（"票"）→ 吐给调用方。
 // 不碰任何通知内容（请求体可为空）——调用方（HotifyNEXT-Server）拿票自己直连华为 push-api，
 // 通知内容不再过任何自有基础设施（隐私第三层）。设计依据 docs/pushkit-transport.md §9.7。
+// 联邦：本仓是公开联邦件，任何人可 clone 部署自己的铸票节点（自己的 SA）。
+// 各节点签出的票带各自 project_id，票与节点配套，不可跨节点使用。
 //
-// 联邦：本仓是公开联邦件，任何人可 clone 部署自己的铸票节点（自己的 SA / 自己的 token）。
-// 各节点签出的票带各自 project_id，票与节点天然配套，不可跨节点使用。
+// 许可策略栈（2026-08-25 设计定稿，env 全默认关 = 纯匿名直通）：
+//
+//	请求 → 身份二分（token 命中→who:label / 匿名→ip:addr）
+//	     → auto-ban 内存临时封（403，固定刑期 TTL 自解；TICKET_AUTO_BAN=0 关）
+//	     → 双桶限速（429，IP 桶兜底防多开 + token 桶 per-server；各=0 关）
+//	     → 签票
+//	永久封 IP = Cloudflare 层（不耗 invoke）；永久封 token = 白名单删行；DoS = CF 限速 + txt 摘节点。
+//	（云函数内不设 txt 封禁表：请求到达已耗配额，挡不住 DoS，纯负资产。）
 //
 // env：
 //
 //	PRIVATE_JSON / PRIVATE_JSON_FILE  service account key（都不设→扫同目录含 PRIVATE KEY 的 .json）
-//	TICKET_AUTH_TOKEN  铸票鉴权；不设=匿名开放（当前模式，2026-08-25 裁定；终态=云端 txt 白名单热更）
-//	TICKET_TTL_SECONDS 票有效期，默认 300（以 canary 实测定案为准，见 pushkit-transport.md §9.7 待验项）
+//	TICKET_AUTH_TOKEN   名单最小载体：设了=单 token 验证（Bearer 匹配→who:default；不匹配→401）；
+//	                    不设=匿名开放（当前模式）。终态=云端 txt 白名单热更（sha256+label）。
+//	TICKET_TTL_SECONDS  票有效期 1~3600，默认 600（canary 实测 30/300/600 均被华为接受 80000000）
+//	TICKET_RATE_LIMIT_IP     IP 桶每分钟张数（宽，防多开兜底）；默认 0=关
+//	TICKET_RATE_LIMIT_TOKEN  token 桶每分钟张数（紧，per-server）；默认 0=关
+//	TICKET_AUTO_BAN      窗口内撞 429 达 N 次触发临时封（双桶共用 N 各自分记）；默认 0=关
+//	TICKET_AUTO_BAN_SECONDS  封多久=strikes 窗口（相等→解封即白纸）；默认 600
 //	HOST=127.0.0.1  PORT=8091   （默认只听回环：前面有 Tunnel/nginx 反代；公网直裸再改 0.0.0.0）
 //
 // 响应契约（调用方 internal/pushkit 按 ticket/project_id/expires_at 三字段消费）：
 //
 //	GET/POST /
-//	Authorization: Bearer <TICKET_AUTH_TOKEN>
 //	→ 200 {"ticket": "<PS256 JWT>", "project_id": "...", "expires_at": <unix秒>}
-//	→ 401 {"error":"unauthorized"}   → 429 {"error":"rate_limited"}
+//	→ 401 {"error":"unauthorized"}  → 403 {"error":"banned"}（Retry-After 头）
+//	→ 429 {"error":"rate_limited"}  → 500 {"error":"private_json"|"sign"}
 package main
 
 import (
@@ -35,6 +48,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -49,6 +63,9 @@ import (
 
 const tokenURI = "https://oauth-login.cloud.huawei.com/oauth2/v3/token" // JWT aud（push-jwt-token 官方模式）
 
+// nowFn 时间源（包级 var：测试可覆盖，对齐 go-harmony harmonyRetryInterval 测试模式）
+var nowFn = time.Now
+
 func main() {
 	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "8091")
 
@@ -60,7 +77,6 @@ func main() {
 	})
 
 	srv := &http.Server{Addr: addr, Handler: mux}
-
 	go func() {
 		mode := "anonymous"
 		if os.Getenv("TICKET_AUTH_TOKEN") != "" {
@@ -82,41 +98,173 @@ func main() {
 	_ = srv.Shutdown(shutCtx)
 }
 
-// ── 票据签发 handler ──
+// ── 身份二分（许可策略族的单一真相键空间）──
 
-var issued atomic.Int64 // 累计签发数（日志观察用）。滥用防护不加：token 私有化后无 token 打不进（401 在先），
-// 正常负载每部署每 TTL 一签；对齐 CF 滥用响应三件 defer 裁定（2026-08-18 YAGNI，触发=公开推广前）。
-
-// verifyToken 铸票准入（留缝收敛点：鉴权演进只改此函数，handler 零动）。
-// 演进路线（2026-08-25 用户定）：
-//   现在：匿名开放——TICKET_AUTH_TOKEN 未设=谁都能拿票（测试期，配额可控）。
-//   过渡：设 TICKET_AUTH_TOKEN=单 token 鉴权。
-//   终态：白名单走云端 txt 实时发布（参考 cloud_function_urls.txt 基建：改 txt 推仓，节点定时拉取
-//         热更，VPS+Netlify 共享一份名单）；一户一 token+标签，删行=吊销（旧票活 ≤TTL）。
-//         ⚠️ token 真值不能进公开 txt——届时存哈希（比对 sha256）或私有仓 raw，实现期再定。
-// who 仅进日志（观察底座），不影响签出的票（票无主体概念，吊销=停发+TTL 自然过期）。
-func verifyToken(r *http.Request) (who string, ok bool) {
-	tok := os.Getenv("TICKET_AUTH_TOKEN")
-	if tok == "" {
-		return "anon", true // 匿名开放（当前默认）
-	}
-	got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(got), []byte(tok)) == 1 {
-		return "default", true // 单 token 期无标签；一户一 token 后返真标签
-	}
-	return "", false
+// identity 请求身份。ipKey 恒有（兜底维度）；tokenKey 仅 token 验证通过时有。
+type identity struct {
+	ipKey    string // "ip:1.2.3.4"
+	tokenKey string // "who:default"（token 期名单 label；匿名空）
+	label    string // 日志用："anon" / "default"（将来名单真标签）
 }
 
+// denied：带了 Bearer 且 TICKET_AUTH_TOKEN 设了但不匹配 → 401（配置错要暴露，不静默降级匿名）。
+// 未设 TICKET_AUTH_TOKEN → 一律匿名（当前模式）；匹配 → who:default。
+func resolveIdentity(r *http.Request) (identity, bool) {
+	id := identity{label: "anon"}
+	if ip := clientIP(r); ip != "" {
+		id.ipKey = "ip:" + ip
+	}
+	tok := os.Getenv("TICKET_AUTH_TOKEN")
+	if tok == "" {
+		return id, true // 匿名开放（当前默认，2026-08-25 裁定）
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth == "" {
+		return id, true // 设了 token 但请求没带 → 匿名（IP 记账）；单 token 期不强制
+	}
+	got := strings.TrimPrefix(auth, "Bearer ")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(tok)) == 1 {
+		id.tokenKey = "who:default" // 一户一 token 后=who:<label>
+		id.label = "default"
+		return id, true
+	}
+	return id, false // 带了头但值错 → 401（配置错要暴露，不静默降级匿名）
+}
+
+// clientIP 可信 IP：CF-Connecting-IP（Tunnel 覆盖写，客户端伪造不了）→ RemoteAddr。
+// 绝不读客户端自带的 X-Forwarded-For。
+func clientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
+		return ip
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// ── 策略状态（限速桶 + strikes + 封禁表；单实例内存态）──
+
+var (
+	guardMu       sync.Mutex
+	rateBuckets   map[string][]time.Time // 限速桶：key → 窗口内签发时间戳（"ip:x"/"who:x"）
+	strikes       map[string][]time.Time // 撞 429 记录：key → 窗口内被拒时间戳
+	bannedUntil   map[string]time.Time   // 临时封：key → 解封时刻（惰性检查，过期即白纸）
+)
+
+var issued atomic.Int64 // 累计签发数（日志观察用）+ 滥用观察底座
+
+// bucketAllow 单桶滑动窗口：窗口内未满记一戳返 true；满返 false。
+func bucketAllow(buckets map[string][]time.Time, key string, limit int) bool {
+	if limit <= 0 {
+		return true // 0=该桶关闭
+	}
+	now := nowFn()
+	stamps := buckets[key]
+	kept := stamps[:0]
+	for _, t := range stamps {
+		if now.Sub(t) < time.Minute {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= limit {
+		buckets[key] = kept
+		return false
+	}
+	buckets[key] = append(kept, now)
+	return true
+}
+
+// addStrike 记一次 429，返回是否触发临时封（窗口内 strikes ≥ N）。
+func addStrike(key string, n int, window, banTTL time.Duration) bool {
+	if n <= 0 {
+		return false // auto-ban 关
+	}
+	now := nowFn()
+	st := strikes[key]
+	kept := st[:0]
+	for _, t := range st {
+		if now.Sub(t) < window {
+			kept = append(kept, t)
+		}
+	}
+	kept = append(kept, now)
+	strikes[key] = kept
+	if len(kept) >= n {
+		bannedUntil[key] = now.Add(banTTL)
+		strikes[key] = nil // 触发即清，解封后白纸（固定刑期：期间请求不刷新不记账）
+		return true
+	}
+	return false
+}
+
+// banRemain 查封禁（惰性：过期顺手删，返 0=未封）。
+func banRemain(key string) time.Duration {
+	if until, ok := bannedUntil[key]; ok {
+		if d := nowFn().Sub(until); d < 0 {
+			return -d
+		}
+		delete(bannedUntil, key)
+	}
+	return 0
+}
+
+// resetGuard 清策略状态（测试隔离用）。
+func resetGuard() {
+	guardMu.Lock()
+	defer guardMu.Unlock()
+	rateBuckets = nil
+	strikes = nil
+	bannedUntil = nil
+}
+
+// ── 票据签发 handler ──
+
 func handleTicket(w http.ResponseWriter, r *http.Request) {
-	who, ok := verifyToken(r)
+	id, ok := resolveIdentity(r)
 	if !ok {
 		log.Printf("[CF-Ticket] auth fail")
 		writeJSON(w, 401, map[string]string{"error": "unauthorized"})
 		return
 	}
-	// ⬅ 滥用防护挂点（defer，2026-08-18 裁定 YAGNI；触发=公开推广/漏斗开闸前，届时在此插
-	// 限速/封禁返 429，不动 handler 结构）。底座已就位：issued 计数 + issue ok 日志行（按 #/who 可数）。
 
+	guardMu.Lock()
+	rateBucketsMap() // 惰性初始化三张表（guardMu 持有下）
+	// ① 临时封（双键任一命中；固定刑期，期间请求零记账）
+	for _, key := range []string{id.tokenKey, id.ipKey} {
+		if key == "" {
+			continue
+		}
+		if d := banRemain(key); d > 0 {
+			guardMu.Unlock()
+			log.Printf("[CF-Ticket] ban hit  who=%s key=%s retry=%s", id.label, key, d.Truncate(time.Second))
+			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
+			writeJSON(w, 403, map[string]string{"error": "banned"})
+			return
+		}
+	}
+	// ② 双桶限速（IP 桶恒查兜底；token 桶有 tokenKey 才查）。超限的桶各自记 strikes。
+	ipOver := !bucketAllow(rateBuckets, id.ipKey, ticketRateLimitIP())
+	tokOver := id.tokenKey != "" && !bucketAllow(rateBuckets, id.tokenKey, ticketRateLimitToken())
+	if ipOver || tokOver {
+		banned := ""
+		if ipOver && addStrike(id.ipKey, ticketAutoBan(), autoBanWindow(), autoBanTTL()) {
+			banned = id.ipKey
+		}
+		if tokOver && id.tokenKey != "" && addStrike(id.tokenKey, ticketAutoBan(), autoBanWindow(), autoBanTTL()) {
+			banned = id.tokenKey
+		}
+		if banned != "" {
+			log.Printf("[CF-Ticket] auto-ban key=%s exp=%s", banned, autoBanTTL().Truncate(time.Second))
+		}
+		guardMu.Unlock()
+		log.Printf("[CF-Ticket] rate lim  who=%s ip=%s", id.label, id.ipKey)
+		writeJSON(w, 429, map[string]string{"error": "rate_limited"})
+		return
+	}
+	guardMu.Unlock()
+
+	// ③ 签票
 	acct, err := loadSA()
 	if err != nil {
 		log.Printf("[CF-Ticket] sa err   %v", err)
@@ -130,13 +278,27 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "sign", "msg": err.Error()})
 		return
 	}
-	// 日志格式对齐 go-harmony [CF] push ok 行风格（固定动词位+列宽，看着不乱）；无内容可记=天然隐私。
-	log.Printf("[CF-Ticket] issue ok  #%-6d ttl=%-4ds proj=%s who=%s", issued.Add(1), int(ttl/time.Second), maskProject(acct.ProjectID), who)
+	// 日志格式对齐 go-harmony [CF] push ok 行风格（固定动词位+列宽）；无内容可记=天然隐私。
+	log.Printf("[CF-Ticket] issue ok  #%-6d ttl=%-4ds proj=%s who=%s", issued.Add(1), int(ttl/time.Second), maskProject(acct.ProjectID), id.label)
 	writeJSON(w, 200, map[string]interface{}{
 		"ticket":     jwt,
 		"project_id": acct.ProjectID,
-		"expires_at": time.Now().Add(ttl).Unix(),
+		"expires_at": nowFn().Add(ttl).Unix(),
 	})
+}
+
+// rateBucketsMap 惰性初始化（guardMu 持有下调用）。
+func rateBucketsMap() map[string][]time.Time {
+	if rateBuckets == nil {
+		rateBuckets = map[string][]time.Time{}
+	}
+	if strikes == nil {
+		strikes = map[string][]time.Time{}
+	}
+	if bannedUntil == nil {
+		bannedUntil = map[string]time.Time{}
+	}
+	return rateBuckets
 }
 
 // ── service account（自包含：本仓独立于中继仓，SA 加载/签名一份在此）──
@@ -200,7 +362,7 @@ func loadSA() (*account, error) {
 // JWT 直接当 Bearer 调 push-api，不换 access_token（那是 Connect API 的流程，别串）。
 // payload 无 sub claim（照华为官方 5 语言示例 + 实测）。
 func (a *account) SignJWT(ttl time.Duration) (string, error) {
-	now := time.Now().Unix()
+	now := nowFn().Unix()
 	header := map[string]string{"kid": a.KeyID, "typ": "JWT", "alg": "PS256"}
 	payload := map[string]interface{}{"iss": a.SubAccount, "aud": tokenURI, "iat": now, "exp": now + int64(ttl/time.Second)}
 	hb, _ := json.Marshal(header)
@@ -256,14 +418,45 @@ func resolvePrivateJSON() string {
 	return ""
 }
 
-// ── 小件 ──
+// ── env 小件 ──
 
 func ticketTTLSeconds() int {
 	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_TTL_SECONDS"))); err == nil && v > 0 && v <= 3600 {
 		return v
 	}
-	return 300
+	return 600
 }
+
+func ticketRateLimitIP() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_RATE_LIMIT_IP"))); err == nil && v > 0 {
+		return v
+	}
+	return 0 // 默认关
+}
+
+func ticketRateLimitToken() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_RATE_LIMIT_TOKEN"))); err == nil && v > 0 {
+		return v
+	}
+	return 0 // 默认关
+}
+
+func ticketAutoBan() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_AUTO_BAN"))); err == nil && v > 0 {
+		return v
+	}
+	return 0 // 默认关
+}
+
+// autoBanTTL 封禁时长=strikes 窗口（相等→解封时旧 strikes 全部出窗=白纸从零开始）。
+func autoBanTTL() time.Duration {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_AUTO_BAN_SECONDS"))); err == nil && v >= 1 {
+		return time.Duration(v) * time.Second
+	}
+	return 600 * time.Second
+}
+
+func autoBanWindow() time.Duration { return autoBanTTL() }
 
 func envStr(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
