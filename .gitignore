@@ -1,0 +1,8 @@
+# 凭证绝不入仓
+private*.json
+*.json.bak
+config.local.*
+
+# 产物
+cf-ticket
+cf-ticket.exe
