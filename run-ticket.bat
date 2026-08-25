@@ -1,12 +1,18 @@
 @echo off
 REM ============================================================
-REM  Hotify CF 2.0 cf-ticket launcher（前台窗口，同 run.bat 风格）。
-REM  前提：本目录有 private.json（SA，启动自动扫描）。
-REM  可选加固（删掉行首 REM 启用，详见 docs/cloudfuctionticketenv.md）：
+REM  Hotify CF 2.0 cf-ticket launcher (foreground window, same
+REM  style as go-harmony run.bat). NOTE: keep this file ASCII --
+REM  cmd decodes batch files as GBK, non-ASCII comments break it.
+REM
+REM  Requires: private.json in THIS folder (AGC -> Project settings
+REM  -> Service account; auto-scanned on start).
+REM
+REM  Optional hardening (uncomment; see docs/cloudfuctionticketenv.md):
 REM    set TICKET_RATE_LIMIT_IP=100
 REM    set TICKET_AUTO_BAN=5
-REM  注意：窗口关了服务就停；VPS 重启后要重新双击本文件。
-REM  （想开机自启/崩溃自动拉起：改用 nssm-ticket.bat 装 Windows 服务）
+REM
+REM  Service stops when the window closes; re-run after VPS reboot.
+REM  For auto-start/crash-restart use nssm-ticket.bat instead.
 REM ============================================================
 
 cd /d "%~dp0"
@@ -17,7 +23,7 @@ if not exist "cf-ticket.exe" (
     exit /b
 )
 if not exist "private.json" (
-    echo [ERROR] private.json not found in this folder ^(AGC -^> 项目设置 -^> 服务账号^).
+    echo [ERROR] private.json not found in this folder ^(AGC - Project settings - Service account^).
     pause
     exit /b
 )

@@ -1,17 +1,18 @@
 @echo off
 REM ============================================================
-REM  Hotify CF 2.0 cf-ticket NSSM installer（铸票厂，Windows VPS）。
-REM  Run ONCE on the VPS as ADMINISTRATOR。自包含假设：
-REM    本目录 = cf-ticket.exe + private.json（SA，含 PRIVATE KEY 自动扫描）
-REM    nssm.exe 已在系统或 go-harmony 目录（路径不同则改 NSSM 变量）
+REM  Hotify CF 2.0 cf-ticket NSSM installer (Windows service).
+REM  Run ONCE on the VPS as ADMINISTRATOR. NOTE: keep ASCII only.
 REM
-REM  Tunnel 不装新的：复用现有 HotifyTunnel，其 config.yml 加一条
-REM  ingress 规则（ticket.hotify.love -> http://localhost:8091）后
-REM  重启 HotifyTunnel 服务即生效。
+REM  Requires in THIS folder: cf-ticket.exe + private.json (AGC ->
+REM  Project settings -> Service account, auto-scanned) + nssm.exe.
+REM
+REM  Optional: service stops listening on localhost:8091 only; the
+REM  existing HotifyTunnel config.yml adds one ingress rule to
+REM  expose it publicly (ticket.<domain> -> http://127.0.0.1:8091).
 REM
 REM  Re-install (after code update):
 REM    nssm stop HotifyTicketCF && nssm remove HotifyTicketCF confirm
-REM    然后重跑本脚本。
+REM    then run this script again.
 REM ============================================================
 
 set NSSM=nssm.exe
@@ -23,7 +24,7 @@ if not exist "cf-ticket.exe" (
     exit /b
 )
 if not exist "private.json" (
-    echo [ERROR] private.json not found in this folder ^(SA, AGC -^> 项目设置 -^> 服务账号^).
+    echo [ERROR] private.json not found in this folder ^(AGC - Project settings - Service account^).
     pause
     exit /b
 )
@@ -32,7 +33,7 @@ if not exist "logs" mkdir logs
 echo --- Installing HotifyTicketCF (cf-ticket, anonymous mode) ---
 "%NSSM%" install HotifyTicketCF "%cd%\cf-ticket.exe"
 "%NSSM%" set HotifyTicketCF AppDirectory "%cd%"
-REM env 全默认即匿名开放 + TTL 600；需要收紧时改这里（TICKET_AUTH_TOKEN / TICKET_RATE_LIMIT_IP 等）
+REM defaults = anonymous + TTL 600; tighten here if needed
 "%NSSM%" set HotifyTicketCF AppEnvironmentExtra PORT=8091 TICKET_TTL_SECONDS=600
 "%NSSM%" set HotifyTicketCF Start SERVICE_AUTO_START
 "%NSSM%" set HotifyTicketCF AppStdout "%cd%\logs\nssm-ticket.log"
