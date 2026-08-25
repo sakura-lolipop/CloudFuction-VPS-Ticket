@@ -29,7 +29,7 @@
 //
 // 响应契约（调用方 internal/pushkit 按 ticket/project_id/expires_at 三字段消费）：
 //
-//	POST /ticket（GET /ticket 说明页；根路径 404=扫描器隐身）
+//	GET/POST /ticket 均签票（根路径 404=隐身门；method 分支已撤，人工 GET 即拿票）
 //	→ 200 {"ticket": "<PS256 JWT>", "project_id": "...", "expires_at": <unix秒>}（POST /ticket）
 //	→ 401 {"error":"unauthorized"}  → 403 {"error":"banned"}（Retry-After 头）
 //	→ 429 {"error":"rate_limited"}  → 500 {"error":"private_json"|"sign"}
@@ -290,29 +290,8 @@ func resetGuard() {
 // ── 票据签发 handler ──
 
 func handleTicket(w http.ResponseWriter, r *http.Request) {
-	// 对抗审 P2：路径精确匹配 + method 白名单——catch-all 让 bot 任意探测路径全 200（RSA 白签
-	// +日志放大+鼓励枚举）。签票口就是根路径，GET/POST/HEAD。
-	if r.URL.Path != "/ticket" {
-		writeJSON(w, 404, map[string]string{"error": "not found"})
-		return
-	}
-	switch r.Method {
-	case http.MethodGet, http.MethodHead:
-		// GET=说明页（零 RSA）：爬虫/浏览器直开不再白烧签名（卡巴 cerebro 扫新域名事件，
-		// 2026-08-25）。取凭证是动作，POST 才签——REST 正确形态。
-		writeJSON(w, 200, map[string]string{
-			"service": "hotify-ticket",
-			"hint":    "POST / to get a ticket {ticket, project_id, expires_at}",
-			"console": "/console",
-			"health":  "/health",
-		})
-		return
-	case http.MethodPost:
-	default:
-		w.Header().Set("Allow", "GET, POST")
-		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
-		return
-	}
+	// 隐身门=根路径 404（路径不可知，扫描器打不到）；到得了 /ticket 的（人/调用方）GET/POST
+	// 随意直接签——method 分支已撤（2026-08-25 用户裁定：404 保护下冗余，极简优先）。
 	start := nowFn()
 	id, ok := resolveIdentity(r)
 	if !ok {

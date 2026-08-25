@@ -51,7 +51,7 @@ Tunnel (reuse existing HotifyTunnel, no new process)
      close the tunnel window and re-run tunnel.bat
    (or: nssm restart HotifyTunnel)
 
-Verify: curl -X POST https://ticket.<your-domain>/ticket -> 3-field JSON (GET / returns 404)
+Verify: curl https://ticket.<your-domain>/ticket -> 3-field JSON (root / returns 404)
 
 Troubleshooting
 ---------------
