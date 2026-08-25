@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -174,25 +175,30 @@ func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(hotifyIcon)
 }
 
-// consoleCopy i18n 文案（zh 默认 / en；?lang= 切换，照 NEXT-Server /console 的 lang 参数先例）。
+// consoleCopy i18n 文案（zh 默认 / en；?lang= 切换。2026-08-25 对抗审终稿：
+// label 不带状态码——badge 是唯一码源；en 弃日志 ASCII 字形（ERR/BAN）用互译人话）。
 var consoleCopy = map[string]map[string]string{
 	"zh": {
 		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
-		"uptime": "运行", "ttl": "票期", "anon": "匿名", "tokenauth": "token 鉴权", "project": "项目",
-		"total": "总签发", "today": "今日签发",
-		"ok": "成功 200", "auth": "鉴权 401", "ban": "封禁 403", "limit": "限流 429", "err": "错误 500",
+		"uptime": "已运行", "ttl": "票据有效期", "anon": "匿名开放", "tokenauth": "Token 鉴权", "project": "项目",
+		"total": "累计签发", "today": "今日签发",
+		"ok": "成功", "auth": "鉴权失败", "ban": "封禁拦截", "limit": "触发限流", "err": "服务错误",
 		"autoban": "自动封禁",
-		"topip": "拿票最多的 IP", "recent": "最近日志", "newest": "最新在上 · 5 秒自动刷新",
-		"empty": "还没有签发", "switch": "English",
+		"topip": "签发请求最多的 IP", "recent": "最近日志", "newest": "最新在前",
+		"iphead": "IP", "counthead": "签发次数",
+		"refresh": "刷新", "autorefresh": "自动刷新", "autorefreshon": "自动刷新中",
+		"empty": "暂无签发", "switch": "English",
 	},
 	"en": {
 		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
-		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "token-auth", "project": "project",
+		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "Token auth", "project": "project",
 		"total": "total issued", "today": "today",
-		"ok": "OK 200", "auth": "ERR 401", "ban": "BAN 403", "limit": "LIMIT 429", "err": "ERR 500",
+		"ok": "Success", "auth": "Unauthorized", "ban": "Banned", "limit": "Rate limited", "err": "Server error",
 		"autoban": "auto-ban",
-		"topip": "Top issue IPs", "recent": "Recent log", "newest": "newest first · 5s refresh",
-		"empty": "no issues yet", "switch": "中文",
+		"topip": "Top IPs", "recent": "Recent log", "newest": "newest first",
+		"iphead": "IP", "counthead": "tickets",
+		"refresh": "Refresh", "autorefresh": "Auto refresh", "autorefreshon": "auto-refreshing",
+		"empty": "no tickets yet", "switch": "中文",
 	},
 }
 
@@ -243,10 +249,13 @@ func humanDur(d time.Duration, lang string) string {
 	}
 }
 
-// humanTTL 票期人性化：600s→"10 分钟"/"10 min"；90s→"90 秒"/"90 s"。
+// humanTTL 票期人性化：600s→"10 分钟"/"10 min"；90s→"90 秒"/"90 s"（zh 不落拉丁单位，对抗审修）。
 func humanTTL(secs int, lang string) string {
 	if secs%60 == 0 {
 		return humanDur(time.Duration(secs)*time.Second, lang)
+	}
+	if lang == "zh" {
+		return strconv.Itoa(secs) + " 秒"
 	}
 	return strconv.Itoa(secs) + "s"
 }
@@ -257,27 +266,60 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, consoleHTML(snap, consoleLang(r), r.Host))
+	refresh := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("refresh")); err == nil && v > 0 {
+		refresh = v // opt-in 自动刷新（对抗审 L4：默认手动，翻页不被 5s 全页重载顶回顶）
+	}
+	fmt.Fprint(w, consoleHTML(snap, consoleLang(r), r.Host, r.URL.RawQuery, refresh))
 }
 
-// consoleHTML Tabler 单页（骨架照 NEXT-Server /console 同款；卡片平铺=row-deck 栅格，
-// 手机 col-6 两列 / 桌面 col-lg-3 四列——Tabler dashboard 标准形态）。
-func consoleHTML(s statsSnapshot, lang string, host string) string {
+// toggleRefreshQuery 当前 query 增/删 refresh 参数（自动刷新开关链接用；保参数粘滞）。
+func toggleRefreshQuery(rawQuery string, on bool) string {
+	q := new(url.Values)
+	for k, vs := range parseRawQuery(rawQuery) {
+		for _, v := range vs {
+			q.Add(k, v)
+		}
+	}
+	q.Del("refresh")
+	link := ""
+	if on {
+		q.Set("refresh", "5")
+	}
+	link = q.Encode()
+	if link == "" {
+		return ""
+	}
+	return "?" + link
+}
+
+func parseRawQuery(raw string) url.Values {
+	v, _ := url.ParseQuery(raw)
+	return v
+}
+
+// consoleHTML Tabler 单页（骨架照 NEXT-Server /console；对抗审终稿：状态卡 label 不带码——
+// badge 是唯一码源且上语义色；刷新=按钮默认+?refresh=5 opt-in；project badge 走 maskProject
+// 对齐日志纪律；日志卡 card-sm 收白边；Top IP 表加 thead）。
+func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, refresh int) string {
 	c := consoleCopy[lang]
 	mode := c["anon"]
 	if s.Mode == "token-auth" {
 		mode = c["tokenauth"]
 	}
-	// statCard 平铺卡片：subheader 小灰题 + 大数字 + 右上角 code 角标（状态卡）。
-	statCard := func(label, val, cls, badge string) string {
+	if h, _, ok := strings.Cut(host, ":"); ok && h != "" {
+		host = h // 截端口（localhost:12346→localhost；观感，非安全面）
+	}
+	// statCard 平铺卡片：subheader 人话题（不带码）+ 大数字 + 语义色码角标（状态卡）。
+	statCard := func(label, val, h1cls, badge, badgeCls string) string {
 		tag := ""
 		if badge != "" {
-			tag = `<span class="badge bg-secondary-lt ms-2">` + badge + `</span>`
+			tag = `<span class="badge ` + badgeCls + ` ms-2">` + badge + `</span>`
 		}
-		return `<div class="col-6 col-lg-3"><div class="card card-sm"><div class="card-body"><div class="subheader">` + label + tag + `</div><div class="h1 mb-0 mt-2 ` + cls + `">` + val + `</div></div></div></div>`
+		return `<div class="col-6 col-lg-3"><div class="card card-sm"><div class="card-body"><div class="subheader">` + label + tag + `</div><div class="h1 mb-0 mt-2 ` + h1cls + `">` + val + `</div></div></div></div>`
 	}
-	statusCard := func(code int, label, cls string) string {
-		return statCard(label, strconv.FormatInt(s.Status[code], 10), cls, strconv.Itoa(code))
+	statusCard := func(code int, label, h1cls, badgeCls string) string {
+		return statCard(label, strconv.FormatInt(s.Status[code], 10), h1cls, strconv.Itoa(code), badgeCls)
 	}
 	ipRows := strings.Builder{}
 	for _, t := range s.TopIPs {
@@ -294,10 +336,21 @@ func consoleHTML(s statsSnapshot, lang string, host string) string {
 	if lang == "en" {
 		switchLang = "zh"
 	}
+	langQuery := toggleRefreshQuery(rawQuery+"&lang="+switchLang, refresh > 0)
+	refreshMeta := ""
+	if refresh > 0 {
+		q := toggleRefreshQuery(rawQuery, true)
+		refreshMeta = `<meta http-equiv="refresh" content="` + strconv.Itoa(refresh) + `;url=` + q + `">`
+	}
+	manualLink := toggleRefreshQuery(rawQuery, false)
+	autoLink := toggleRefreshQuery(rawQuery, true)
+	newestNote := c["newest"]
+	if refresh > 0 {
+		newestNote += ` · <a href="` + manualLink + `">` + c["autorefreshon"] + ` ⏸</a>`
+	}
 	return `<!doctype html>
 <html lang="` + lang + `"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="5;url=?lang=` + lang + `">
+<meta name="viewport" content="width=device-width, initial-scale=1">` + refreshMeta + `
 <title>` + c["title"] + `</title>
 <link rel="icon" type="image/png" href="/hotify-icon.png">
 <link rel="stylesheet" href="/tabler.min.css">
@@ -308,32 +361,43 @@ func consoleHTML(s statsSnapshot, lang string, host string) string {
     <span class="navbar-brand"><img src="/hotify-icon.png" alt="" style="width:2rem;height:2rem;border-radius:.375rem;vertical-align:-.5rem"> ` + c["brand"] + `</span>
     <div class="d-flex flex-wrap gap-1 align-items-center">
       <span class="badge bg-blue-lt">` + html.EscapeString(host) + `</span>
-      <span class="badge bg-cyan-lt">` + c["project"] + ` ` + s.ProjectID + `</span>
-      <span class="badge bg-lime-lt">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
-      <span class="badge bg-lime-lt">` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
-      <span class="badge bg-secondary-lt">` + mode + `</span>
-      <a href="?lang=` + switchLang + `" class="btn btn-sm btn-outline-primary ms-2">` + c["switch"] + `</a>
+      <span class="badge bg-cyan-lt">` + c["project"] + ` ` + maskProject(s.ProjectID) + `</span>
+      <span class="badge bg-secondary-lt">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
+      <span class="badge bg-secondary-lt">` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
+      <span class="badge bg-lime-lt">` + mode + `</span>
+      <a href="` + langQuery + `" class="btn btn-sm btn-outline-primary ms-2">` + c["switch"] + `</a>
     </div>
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
 <div class="row row-deck row-cards mb-3">` +
-	statCard(c["total"], strconv.FormatInt(s.Issued, 10), "", "") +
-	statCard(c["today"], strconv.FormatInt(s.IssuedToday, 10), "", "") +
-	statusCard(200, c["ok"], "text-blue") +
-	statusCard(401, c["auth"], "text-orange") +
-	statusCard(403, c["ban"], "text-orange") +
-	statusCard(429, c["limit"], "text-orange") +
-	statusCard(500, c["err"], "text-red") +
-	statCard(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary", "") +
+	statCard(c["total"], strconv.FormatInt(s.Issued, 10), "", "", "") +
+	statCard(c["today"], strconv.FormatInt(s.IssuedToday, 10), "", "", "") +
+	statusCard(200, c["ok"], "text-green", "bg-green-lt") +
+	statusCard(401, c["auth"], "text-orange", "bg-orange-lt") +
+	statusCard(403, c["ban"], "text-orange", "bg-orange-lt") +
+	statusCard(429, c["limit"], "text-yellow", "bg-yellow-lt") +
+	statusCard(500, c["err"], "text-red", "bg-red-lt") +
+	statCard(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary", "", "") +
 	`</div>
-<div class="card card-md mb-3">
+<div class="card card-sm mb-3">
   <div class="card-header"><h3 class="card-title">` + c["topip"] + `</h3></div>
-  <div class="table-responsive"><table class="table table-vcenter card-table">` + ipRows.String() + `</table></div>
+  <div class="table-responsive"><table class="table table-vcenter card-table">
+  <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>` + ipRows.String() + `</table></div>
 </div>
-<div class="card card-md">
-  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions text-secondary">` + c["newest"] + `</div></div>
-  <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:360px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
+<div class="card card-sm">
+  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions">
+    <a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary">` + c["refresh"] + `</a>
+    <span class="text-secondary ms-2">` + newestNote + `</span>` +
+	func() string {
+		if refresh <= 0 {
+			return `
+    <a href="` + autoLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefresh"] + `</a>`
+		}
+		return ""
+	}() + `
+  </div></div>
+  <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
 </div>
 </div></div></div>
 </div></body></html>`
