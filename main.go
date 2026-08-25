@@ -47,6 +47,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -69,6 +70,18 @@ var nowFn = time.Now
 func main() {
 	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "12346")
 
+	// 双腿（对齐 NEXT-Server log.md 模式）：stdout 着色渲染（TTY 才开色）+ logs\ticket.log 原样
+	// 纯文本（ANSI 不落盘、grep 友好）。文件腿打不开退 stdout-only（不因日志故障拒服务）。
+	logOutput := io.Writer(NewColorWriter(os.Stdout, ColorEnabled()))
+	if err := os.MkdirAll("logs", 0755); err == nil {
+		if f, err := os.OpenFile("logs"+string(os.PathSeparator)+"ticket.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			logOutput = io.MultiWriter(logOutput, f)
+		} else {
+			log.Printf("[ticket] ⚠ open logs/ticket.log failed: %v (stdout only)", err)
+		}
+	}
+	log.SetOutput(logOutput)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleTicket)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -82,9 +95,14 @@ func main() {
 		if os.Getenv("TICKET_AUTH_TOKEN") != "" {
 			mode = "token-auth"
 		}
-		log.Printf("[CF-Ticket] listening on %s (ttl=%ds, %s)", addr, ticketTTLSeconds(), mode)
+		acct, err := loadSA()
+		proj := "-"
+		if err == nil {
+			proj = acct.ProjectID
+		}
+		log.Printf("[ticket] listen %s (ttl=%ds proj=%s %s)", addr, ticketTTLSeconds(), proj, mode)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[CF-Ticket] listen: %v", err)
+			log.Fatalf("[ticket] listen: %v", err)
 		}
 	}()
 
@@ -92,10 +110,16 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
-	log.Printf("[CF-Ticket] shutting down")
+	log.Printf("[ticket] shutdown")
 	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+}
+
+// reqLog 请求行平铺日志（渲染层按 [ticket]+首4token 列化）：
+// [ticket] <status> <dur> <ip> <method> <body 动作短语>（who 匿名期省略，非匿名尾缀）。
+func reqLog(r *http.Request, status int, start time.Time, body string) {
+	log.Printf("[ticket] %d %s %s %s %s", status, nowFn().Sub(start), clientIP(r), r.Method, body)
 }
 
 // ── 身份二分（许可策略族的单一真相键空间）──
@@ -221,11 +245,19 @@ func resetGuard() {
 // ── 票据签发 handler ──
 
 func handleTicket(w http.ResponseWriter, r *http.Request) {
+	start := nowFn()
 	id, ok := resolveIdentity(r)
 	if !ok {
-		log.Printf("[CF-Ticket] auth fail ")
+		reqLog(r, 401, start, "✗ auth fail")
 		writeJSON(w, 401, map[string]string{"error": "unauthorized"})
 		return
+	}
+	// who 非匿名才尾缀 body（匿名期 who=anon 零信息，省略；token 期=归因锚）
+	who := func(body string) string {
+		if id.label != "anon" {
+			return body + " who=" + id.label
+		}
+		return body
 	}
 
 	guardMu.Lock()
@@ -237,7 +269,7 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 		}
 		if d := banRemain(key); d > 0 {
 			guardMu.Unlock()
-			log.Printf("[CF-Ticket] ban hit   who=%s key=%s retry=%s", id.label, key, d.Truncate(time.Second))
+			reqLog(r, 403, start, who("🧊 ban hit retry="+d.Truncate(time.Second).String()))
 			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
 			writeJSON(w, 403, map[string]string{"error": "banned"})
 			return
@@ -255,10 +287,10 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 			banned = id.tokenKey
 		}
 		if banned != "" {
-			log.Printf("[CF-Ticket] auto-ban  key=%s exp=%s", banned, autoBanTTL().Truncate(time.Second))
+			log.Printf("[ticket] ⚠ auto-ban %s exp=%s", banned, autoBanTTL().Truncate(time.Second))
 		}
 		guardMu.Unlock()
-		log.Printf("[CF-Ticket] rate lim  who=%s ip=%s", id.label, id.ipKey)
+		reqLog(r, 429, start, who("⚠ rate limit"))
 		writeJSON(w, 429, map[string]string{"error": "rate_limited"})
 		return
 	}
@@ -267,19 +299,19 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 	// ③ 签票
 	acct, err := loadSA()
 	if err != nil {
-		log.Printf("[CF-Ticket] sa err    %v", err)
+		reqLog(r, 500, start, "✗ sa error: "+err.Error())
 		writeJSON(w, 500, map[string]string{"error": "private_json", "msg": err.Error()})
 		return
 	}
 	ttl := time.Duration(ticketTTLSeconds()) * time.Second
 	jwt, err := acct.SignJWT(ttl)
 	if err != nil {
-		log.Printf("[CF-Ticket] sign err  %v", err)
+		reqLog(r, 500, start, "✗ sign error: "+err.Error())
 		writeJSON(w, 500, map[string]string{"error": "sign", "msg": err.Error()})
 		return
 	}
-	// 日志格式对齐 go-harmony [CF] push ok 行风格（固定动词位+列宽）；无内容可记=天然隐私。
-	log.Printf("[CF-Ticket] issue ok  #%-6d ttl=%-4ds proj=%s who=%s", issued.Add(1), int(ttl/time.Second), maskProject(acct.ProjectID), id.label)
+	// body 纯动作短语（归因靠列：状态/耗时/IP/method；proj/ttl 恒定值只在 listen 行）
+	reqLog(r, 200, start, who(fmt.Sprintf("✓ issue #%d", issued.Add(1))))
 	writeJSON(w, 200, map[string]interface{}{
 		"ticket":     jwt,
 		"project_id": acct.ProjectID,
