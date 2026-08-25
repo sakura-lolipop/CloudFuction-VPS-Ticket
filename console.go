@@ -179,7 +179,7 @@ func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
 // label 不带状态码——badge 是唯一码源；en 弃日志 ASCII 字形（ERR/BAN）用互译人话）。
 var consoleCopy = map[string]map[string]string{
 	"zh": {
-		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
+		"title": "Hotify · Ticket", "brand": "Hotify · Ticket",
 		"uptime": "已运行", "ttl": "票据有效期", "anon": "匿名开放", "tokenauth": "Token 鉴权", "project": "项目",
 		"total": "累计签发", "today": "今日签发",
 		"ok": "成功", "auth": "鉴权失败", "ban": "封禁拦截", "limit": "触发限流", "err": "服务错误",
@@ -190,7 +190,7 @@ var consoleCopy = map[string]map[string]string{
 		"empty": "暂无签发", "switch": "English",
 	},
 	"en": {
-		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
+		"title": "Hotify · Ticket", "brand": "Hotify · Ticket",
 		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "Token auth", "project": "project",
 		"total": "total issued", "today": "today",
 		"ok": "Success", "auth": "Unauthorized", "ban": "Banned", "limit": "Rate limited", "err": "Server error",
@@ -266,27 +266,25 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	refresh := 0
-	if v, err := strconv.Atoi(r.URL.Query().Get("refresh")); err == nil && v > 0 {
-		refresh = v // opt-in 自动刷新（对抗审 L4：默认手动，翻页不被 5s 全页重载顶回顶）
+	// 自动刷新默认开（2026-08-25 用户裁定：打开就是活的）；?refresh=0 暂停（query 显式 0 才停——
+	// 去掉参数会回落默认 5，暂停态必须靠参数粘滞）。
+	refresh := 5
+	if v, err := strconv.Atoi(r.URL.Query().Get("refresh")); err == nil && v >= 0 {
+		refresh = v
 	}
 	fmt.Fprint(w, consoleHTML(snap, consoleLang(r), r.Host, r.URL.RawQuery, refresh))
 }
 
-// toggleRefreshQuery 当前 query 增/删 refresh 参数（自动刷新开关链接用；保参数粘滞）。
-func toggleRefreshQuery(rawQuery string, on bool) string {
-	q := new(url.Values)
-	for k, vs := range parseRawQuery(rawQuery) {
-		for _, v := range vs {
-			q.Add(k, v)
-		}
-	}
+// toggleRefreshQuery 当前 query 重设 refresh 参数（暂停/恢复/语言切换保参数粘滞；val<0=删参数）。
+// ⚠️ q 必须来自 parseRawQuery（ParseQuery 返非 nil map）——new(url.Values) 是 nil map 指针，
+// Add 即 panic（2026-08-25 /console 空回复事故根因，console_repro_test 锁回归）。
+func toggleRefreshQuery(rawQuery string, refreshVal int) string {
+	q := parseRawQuery(rawQuery)
 	q.Del("refresh")
-	link := ""
-	if on {
-		q.Set("refresh", "5")
+	if refreshVal >= 0 {
+		q.Set("refresh", strconv.Itoa(refreshVal))
 	}
-	link = q.Encode()
+	link := q.Encode()
 	if link == "" {
 		return ""
 	}
@@ -336,17 +334,18 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	if lang == "en" {
 		switchLang = "zh"
 	}
-	langQuery := toggleRefreshQuery(rawQuery+"&lang="+switchLang, refresh > 0)
+	langQuery := toggleRefreshQuery(rawQuery+"&lang="+switchLang, refresh) // 语言切换保 refresh 值粘滞（暂停态不掉回默认）
 	refreshMeta := ""
 	if refresh > 0 {
-		q := toggleRefreshQuery(rawQuery, true)
+		q := toggleRefreshQuery(rawQuery, refresh)
 		refreshMeta = `<meta http-equiv="refresh" content="` + strconv.Itoa(refresh) + `;url=` + q + `">`
 	}
-	manualLink := toggleRefreshQuery(rawQuery, false)
-	autoLink := toggleRefreshQuery(rawQuery, true)
+	manualLink := toggleRefreshQuery(rawQuery, refresh) // 刷新按钮=原地（保当前 refresh 态）
+	autoLink := toggleRefreshQuery(rawQuery, 5)         // 恢复自动
+	pauseLink := toggleRefreshQuery(rawQuery, 0)        // 暂停（显式 0 粘滞，去掉参数会回落默认 5）
 	newestNote := c["newest"]
 	if refresh > 0 {
-		newestNote += ` · <a href="` + manualLink + `">` + c["autorefreshon"] + ` ⏸</a>`
+		newestNote += ` · <a href="` + pauseLink + `">` + c["autorefreshon"] + ` ⏸</a>`
 	}
 	return `<!doctype html>
 <html lang="` + lang + `"><head><meta charset="utf-8">
