@@ -223,7 +223,7 @@ func resetGuard() {
 func handleTicket(w http.ResponseWriter, r *http.Request) {
 	id, ok := resolveIdentity(r)
 	if !ok {
-		log.Printf("[CF-Ticket] auth fail")
+		log.Printf("[CF-Ticket] auth fail ")
 		writeJSON(w, 401, map[string]string{"error": "unauthorized"})
 		return
 	}
@@ -237,7 +237,7 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 		}
 		if d := banRemain(key); d > 0 {
 			guardMu.Unlock()
-			log.Printf("[CF-Ticket] ban hit  who=%s key=%s retry=%s", id.label, key, d.Truncate(time.Second))
+			log.Printf("[CF-Ticket] ban hit   who=%s key=%s retry=%s", id.label, key, d.Truncate(time.Second))
 			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
 			writeJSON(w, 403, map[string]string{"error": "banned"})
 			return
@@ -255,7 +255,7 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 			banned = id.tokenKey
 		}
 		if banned != "" {
-			log.Printf("[CF-Ticket] auto-ban key=%s exp=%s", banned, autoBanTTL().Truncate(time.Second))
+			log.Printf("[CF-Ticket] auto-ban  key=%s exp=%s", banned, autoBanTTL().Truncate(time.Second))
 		}
 		guardMu.Unlock()
 		log.Printf("[CF-Ticket] rate lim  who=%s ip=%s", id.label, id.ipKey)
@@ -267,14 +267,14 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 	// ③ 签票
 	acct, err := loadSA()
 	if err != nil {
-		log.Printf("[CF-Ticket] sa err   %v", err)
+		log.Printf("[CF-Ticket] sa err    %v", err)
 		writeJSON(w, 500, map[string]string{"error": "private_json", "msg": err.Error()})
 		return
 	}
 	ttl := time.Duration(ticketTTLSeconds()) * time.Second
 	jwt, err := acct.SignJWT(ttl)
 	if err != nil {
-		log.Printf("[CF-Ticket] sign err %v", err)
+		log.Printf("[CF-Ticket] sign err  %v", err)
 		writeJSON(w, 500, map[string]string{"error": "sign", "msg": err.Error()})
 		return
 	}
