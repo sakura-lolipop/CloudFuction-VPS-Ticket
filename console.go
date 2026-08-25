@@ -386,7 +386,7 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	`</div>
 <div class="card card-sm mb-3">
   <div class="card-header"><h3 class="card-title">` + c["topip"] + `</h3></div>
-  <div class="table-responsive"><table class="table table-vcenter card-table">
+  <div class="card-table table-responsive"><table class="table table-vcenter">
   <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>` + ipRows.String() + `</table></div>
 </div>
 <div class="card card-sm">
