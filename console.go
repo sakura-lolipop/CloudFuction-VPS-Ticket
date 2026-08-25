@@ -179,7 +179,7 @@ func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
 // label 不带状态码——badge 是唯一码源；en 弃日志 ASCII 字形（ERR/BAN）用互译人话）。
 var consoleCopy = map[string]map[string]string{
 	"zh": {
-		"title": "Hotify · Ticket", "brand": "Hotify · Ticket",
+		"title": "Hotify Ticket", "brand": "Hotify Ticket",
 		"uptime": "已运行", "ttl": "票据有效期", "anon": "匿名开放", "tokenauth": "Token 鉴权", "project": "项目",
 		"total": "累计签发", "today": "今日签发",
 		"ok": "成功", "auth": "鉴权失败", "ban": "封禁拦截", "limit": "触发限流", "err": "服务错误",
@@ -190,7 +190,7 @@ var consoleCopy = map[string]map[string]string{
 		"empty": "暂无签发", "switch": "English",
 	},
 	"en": {
-		"title": "Hotify · Ticket", "brand": "Hotify · Ticket",
+		"title": "Hotify Ticket", "brand": "Hotify Ticket",
 		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "Token auth", "project": "project",
 		"total": "total issued", "today": "today",
 		"ok": "Success", "auth": "Unauthorized", "ban": "Banned", "limit": "Rate limited", "err": "Server error",
