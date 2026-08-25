@@ -23,8 +23,10 @@ if not exist "cf-ticket.exe" (
     pause
     exit /b
 )
-if not exist "private.json" (
-    echo [ERROR] private.json not found in this folder ^(AGC - Project settings - Service account^).
+if not exist "*.json" (
+    echo [ERROR] no .json file in this folder. Put your AGC service account
+    echo key here -- ANY filename works, it is auto-scanned by content
+    echo ^(must contain a PRIVATE KEY value^).
     pause
     exit /b
 )
