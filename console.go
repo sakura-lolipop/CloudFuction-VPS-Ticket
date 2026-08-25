@@ -176,18 +176,55 @@ func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(hotifyIcon)
 }
 
-// cardIcon 卡片标题图标（Tabler icons 风格内联 stroke SVG，零外部依赖；治"卡头一行小字浮着空"）。
-func cardIcon(name string) string {
+// icon 内联 stroke SVG（Tabler icons 风格，零外部依赖；UI 设计师 2026-08-25 评审定稿的全套 path）。
+// 装饰性图标 aria-hidden；图标-only 按钮的语义靠调用方给 aria-label/title。
+func icon(name string, size int) string {
 	var path string
 	switch name {
 	case "list":
 		path = `<path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M5 6v.01"/><path d="M5 12v.01"/><path d="M5 18v.01"/>`
 	case "terminal":
 		path = `<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>`
+	case "network":
+		path = `<circle cx="12" cy="5.5" r="2"/><circle cx="5" cy="18.5" r="2"/><circle cx="19" cy="18.5" r="2"/><path d="M12 7.5v4M12 11.5l-5.6 5.2M12 11.5l5.6 5.2"/>`
+	case "globe":
+		path = `<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/>`
+	case "clock":
+		path = `<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>`
+	case "ticket":
+		path = `<path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M14 6.5v11" stroke-dasharray="2.4 2.4"/>`
+	case "lock":
+		path = `<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>`
+	case "unlock":
+		path = `<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.7-1.5"/>`
+	case "shield":
+		path = `<path d="M12 3l7 3v5.5c0 4.7-3.2 8.3-7 9.5-3.8-1.2-7-4.8-7-9.5V6z"/>`
+	case "refresh":
+		path = `<path d="M15.5 5.94A7 7 0 1 1 18.9 10.8"/><path d="M16.4 9.1l2.5 1.7 2.5-1.7"/>`
+	case "pause":
+		path = `<path d="M9.5 5.5v13M14.5 5.5v13"/>`
+	case "play":
+		path = `<path d="M7 5.5l11 6.5-11 6.5z"/>`
 	default:
 		return ""
 	}
-	return `<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler me-2" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.375rem">` + path + `</svg>`
+	return `<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="` + strconv.Itoa(size) + `" height="` + strconv.Itoa(size) + `" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.2em">` + path + `</svg>`
+}
+
+// humanCount 千分位分组（面板大数/表列共用；本面板计数恒非负）。
+func humanCount(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) < 4 {
+		return s
+	}
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b = append(b, ',')
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
 }
 
 // consoleCopy i18n 文案（zh 默认 / en；?lang= 切换。2026-08-25 对抗审终稿：
@@ -201,7 +238,7 @@ var consoleCopy = map[string]map[string]string{
 		"autoban": "自动封禁",
 		"topip": "签发来源", "recent": "实时日志",
 		"iphead": "IP", "counthead": "签发次数",
-		"refresh": "刷新", "autorefresh": "自动刷新", "autorefreshon": "自动刷新中",
+		"refresh": "刷新", "autorefresh": "自动刷新", "autorefreshon": "自动刷新中", "pause": "暂停自动刷新",
 		"empty": "暂无签发", "switch": "English",
 	},
 	"en": {
@@ -212,7 +249,7 @@ var consoleCopy = map[string]map[string]string{
 		"autoban": "auto-ban",
 		"topip": "Top sources", "recent": "Live log",
 		"iphead": "IP", "counthead": "tickets",
-		"refresh": "Refresh", "autorefresh": "Auto refresh", "autorefreshon": "auto-refreshing",
+		"refresh": "Refresh", "autorefresh": "Auto refresh", "autorefreshon": "auto-refreshing", "pause": "Pause auto-refresh",
 		"empty": "no tickets yet", "switch": "中文",
 	},
 }
@@ -309,32 +346,22 @@ func parseRawQuery(raw string) url.Values {
 	return vals
 }
 
-// consoleHTML Tabler 单页（骨架照 NEXT-Server /console；对抗审终稿：状态卡 label 不带码——
-// badge 是唯一码源且上语义色；刷新=按钮默认+?refresh=5 opt-in；project badge 走 maskProject
-// 对齐日志纪律；日志卡 card-sm 收白边；Top IP 表加 thead）。
+// consoleHTML UI 设计师 2026-08-25 激进版定稿（demo.html 同构）：
+//   hero（唯一 3rem 大数=累计 + 今日 delta + meta 行收静态事实）→ 状态条（dot+label+count，
+//   零计数半透明——错误不出声）→ 主舞台双栏（日志 col-lg-8 主面板 + 来源 col-lg-4）。
+//   设计规则：数值全墨色（色只穿 8px dot）、图标化动作按钮（⏸ unicode 消灭）、refresh 默认开。
 func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, refresh int) string {
 	c := consoleCopy[lang]
-	mode := c["anon"]
+	mode, modeIcon := c["anon"], "unlock"
 	if s.Mode == "token-auth" {
-		mode = c["tokenauth"]
+		mode, modeIcon = c["tokenauth"], "lock"
 	}
 	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
-		host = h // 截端口（localhost:12346→localhost；SplitHostPort 保 IPv6 [::1] 不切坏——对抗审 F5）
-	}
-	// statCard 平铺卡片：subheader 人话题（不带码）+ 大数字 + 语义色码角标（状态卡）。
-	statCard := func(label, val, h1cls, badge, badgeCls string) string {
-		tag := ""
-		if badge != "" {
-			tag = `<span class="badge ` + badgeCls + ` ms-2">` + badge + `</span>`
-		}
-		return `<div class="col-6 col-lg-3"><div class="card card-sm"><div class="card-body"><div class="subheader">` + label + tag + `</div><div class="h1 mb-0 mt-2 ` + h1cls + `">` + val + `</div></div></div></div>`
-	}
-	statusCard := func(code int, label, h1cls, badgeCls string) string {
-		return statCard(label, strconv.FormatInt(s.Status[code], 10), h1cls, strconv.Itoa(code), badgeCls)
+		host = h // 截端口（SplitHostPort 保 IPv6 [::1] 不切坏）
 	}
 	ipRows := strings.Builder{}
 	for _, row := range s.TopIPs {
-		ipRows.WriteString(`<tr><td>` + html.EscapeString(row.IP) + `</td><td class="text-end">` + strconv.FormatInt(row.Count, 10) + `</td></tr>`)
+		ipRows.WriteString(`<tr><td>` + html.EscapeString(row.IP) + `</td><td class="text-end">` + humanCount(row.Count) + `</td></tr>`)
 	}
 	if ipRows.Len() == 0 {
 		ipRows.WriteString(`<tr><td colspan="2" class="text-secondary">` + c["empty"] + `</td></tr>`)
@@ -347,22 +374,35 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	if lang == "en" {
 		switchLang = "zh"
 	}
-	// 所有链接从 pageQuery 单一构造器出（幂等 set，双值根杀）；空值=Del 该键（langQuery 去掉参数回落默认 zh）。
+	// 所有链接从 pageQuery 单一构造器出（幂等 set，双值根杀）。
 	langQuery := pageQuery(rawQuery, map[string]string{"lang": switchLang, "refresh": strconv.Itoa(refresh)})
 	refreshMeta := ""
 	if refresh > 0 {
 		q := pageQuery(rawQuery, nil)
 		refreshMeta = `<meta http-equiv="refresh" content="` + strconv.Itoa(refresh) + `;url=` + q + `">`
 	}
-	manualLink := pageQuery(rawQuery, nil) // 刷新按钮=原地（保当前 query）
-	autoLink := pageQuery(rawQuery, map[string]string{"refresh": ""}) // 恢复自动=Del refresh（回落默认 5）——传 nil 不删键=暂停死路（对抗审 F4）
-	pauseLink := pageQuery(rawQuery, map[string]string{"refresh": "0"}) // 暂停（显式 0 粘滞）
-	// 刷新控制族全按钮化（单一真相：三态同款 btn-outline-secondary，无文字链混杂）
-	refreshBtns := `<a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary">` + c["refresh"] + `</a>`
+	manualLink := pageQuery(rawQuery, nil)                                   // 刷新=原地
+	autoLink := pageQuery(rawQuery, map[string]string{"refresh": ""})        // 恢复自动=Del refresh
+	pauseLink := pageQuery(rawQuery, map[string]string{"refresh": "0"})      // 暂停（显式 0 粘滞）
+	// 刷新控制族：图标按钮（aria-label 承载语义——被图标替换的词搬进来）
+	spinCls := ""
 	if refresh > 0 {
-		refreshBtns += ` <a href="` + pauseLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefreshon"] + ` ⏸</a>`
+		spinCls = " spin" // 自动刷新态=刷新图标常转
+	}
+	refreshBtns := `<a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary px-2" aria-label="` + c["refresh"] + `" title="` + c["refresh"] + `"><span class="icon` + spinCls + `" style="display:inline-flex">` + icon("refresh", 16) + `</span></a>`
+	if refresh > 0 {
+		refreshBtns += ` <span class="status-dot status-dot-animated me-1" style="background:var(--tblr-green)"></span><span class="text-secondary me-2">` + strconv.Itoa(refresh) + `s</span>` +
+			`<a href="` + pauseLink + `" class="btn btn-sm btn-outline-secondary px-2" aria-label="` + c["pause"] + `" title="` + c["pause"] + `">` + icon("pause", 16) + `</a>`
 	} else {
-		refreshBtns += ` <a href="` + autoLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefresh"] + `</a>`
+		refreshBtns += ` <a href="` + autoLink + `" class="btn btn-sm btn-outline-secondary px-2" aria-label="` + c["autorefresh"] + `" title="` + c["autorefresh"] + `">` + icon("play", 16) + `</a>`
+	}
+	// 状态条单元（零计数半透明）
+	statCell := func(code int, label, dotColor string) string {
+		cls := ""
+		if s.Status[code] == 0 {
+			cls = " opacity-50"
+		}
+		return `<div class="d-flex align-items-center gap-2` + cls + `" title="HTTP ` + strconv.Itoa(code) + `"><span class="status-dot" style="background:var(--tblr-` + dotColor + `)"></span><span class="text-secondary">` + label + `</span><span style="font-size:1.125rem;font-weight:600">` + humanCount(s.Status[code]) + `</span></div>`
 	}
 	return `<!doctype html>
 <html lang="` + lang + `"><head><meta charset="utf-8">
@@ -370,40 +410,87 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 <title>` + c["title"] + `</title>
 <link rel="icon" type="image/png" href="/hotify-icon.png">
 <link rel="stylesheet" href="/tabler.min.css">
+<style>
+.card{transition:border-color .15s ease,box-shadow .15s ease}
+.card:hover{border-color:rgba(6,111,209,.28);box-shadow:0 1px 8px rgba(0,0,0,.05)}
+a.btn{transition:transform .08s ease}
+a.btn:active{transform:scale(.96)}
+a.btn:focus-visible{outline:2px solid #066fd1;outline-offset:2px}
+.spin{animation:console-spin 1.8s linear infinite;transform-origin:50% 50%}
+@keyframes console-spin{to{transform:rotate(360deg)}}
+body{animation:console-fade .18s ease-out}
+@keyframes console-fade{from{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}body{animation:none}.status-dot-animated{animation:none}}
+</style>
 </head><body class="theme-light">
 <div class="page">
 <nav class="navbar navbar-expand-md navbar-light">
   <div class="container-xl">
     <span class="navbar-brand"><img src="/hotify-icon.png" alt="" style="width:2rem;height:2rem;border-radius:.375rem;vertical-align:-.5rem"> ` + c["brand"] + `</span>
-    <div class="d-flex flex-wrap gap-1 align-items-center">
-      <span class="badge bg-blue-lt">` + html.EscapeString(host) + `</span>
-      <span class="badge bg-secondary-lt">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
-      <span class="badge bg-secondary-lt">` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
-      <span class="badge bg-lime-lt">` + mode + `</span>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge bg-lime-lt">` + icon(modeIcon, 14) + ` ` + mode + `</span>
       <a href="` + langQuery + `" class="btn btn-sm btn-outline-primary ms-2">` + c["switch"] + `</a>
     </div>
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
-<div class="row row-deck row-cards mb-3">` +
-	statCard(c["total"], strconv.FormatInt(s.Issued, 10), "", "", "") +
-	statCard(c["today"], strconv.FormatInt(s.IssuedToday, 10), "", "", "") +
-	statusCard(200, c["ok"], "text-green", "bg-green-lt") +
-	statusCard(401, c["auth"], "text-orange", "bg-orange-lt") +
-	statusCard(403, c["ban"], "text-orange", "bg-orange-lt") +
-	statusCard(429, c["limit"], "text-yellow", "bg-yellow-lt") +
-	statusCard(500, c["err"], "text-red", "bg-red-lt") +
-	statCard(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary", "", "") +
-	`</div>
-<div class="card card-sm mb-3">
-  <div class="card-header"><h3 class="card-title">` + cardIcon("list") + c["topip"] + `</h3></div>
-  <div class="card-table table-responsive"><table class="table table-vcenter">
-  <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>` + ipRows.String() + `</table></div>
+
+<div class="card mb-3"><div class="card-body">
+  <div class="d-flex flex-wrap align-items-end justify-content-between gap-3">
+    <div>
+      <div class="subheader">` + c["total"] + `</div>
+      <div style="font-size:3rem;font-weight:600;line-height:1.05">` + humanCount(s.Issued) + `</div>
+    </div>
+    <div class="text-end">
+      <div class="subheader">` + c["today"] + `</div>
+      <div class="h2 mb-0">+` + humanCount(s.IssuedToday) + `</div>
+    </div>
+  </div>
+  <div class="hr my-3"></div>
+  <div class="d-flex flex-wrap text-secondary gap-3" style="font-size:.875rem">
+    <span>` + icon("globe", 14) + ` ` + html.EscapeString(host) + `</span>
+    <span>` + icon("clock", 14) + ` ` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
+    <span>` + icon("ticket", 14) + ` ` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
+    <span>` + icon("terminal", 14) + ` ` + c["project"] + ` ` + maskProject(s.ProjectID) + `</span>
+  </div>
+</div></div>
+
+<div class="card mb-3"><div class="card-body py-3">
+  <div class="d-flex flex-wrap align-items-center gap-3">` +
+	statCell(401, c["auth"], "orange") +
+	statCell(403, c["ban"], "orange") +
+	statCell(429, c["limit"], "yellow") +
+	statCell(500, c["err"], "red") +
+	`<div style="width:1px;align-self:stretch;background:var(--tblr-border-color)"></div>
+    <div class="d-flex align-items-center gap-2" title="auto-ban">` + icon("shield", 16) + `<span class="text-secondary">` + c["autoban"] + `</span><span style="font-size:1.125rem;font-weight:600">` + humanCount(s.Bans) + `</span></div>
+  </div>
+</div></div>
+
+<div class="row row-deck row-cards mb-3">
+  <div class="col-lg-8">
+    <div class="card card-sm">
+      <div class="card-header">
+        <h3 class="card-title">` + icon("terminal", 24) + ` ` + c["recent"] + `</h3>
+        <div class="card-actions d-flex align-items-center gap-2">` + refreshBtns + `</div>
+      </div>
+      <div class="card-body">
+        <pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:clamp(240px,45vh,560px);white-space:pre-wrap;overflow-wrap:anywhere">` + logLines.String() + `</pre>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card card-sm">
+      <div class="card-header"><h3 class="card-title">` + icon("network", 24) + ` ` + c["topip"] + `</h3></div>
+      <div class="card-table table-responsive">
+        <table class="table table-vcenter table-hover">
+          <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>
+          <tbody style="font-variant-numeric:tabular-nums">` + ipRows.String() + `</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
-<div class="card card-sm">
-  <div class="card-header"><h3 class="card-title">` + cardIcon("terminal") + c["recent"] + `</h3><div class="card-actions">` + refreshBtns + `</div></div>
-  <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
-</div>
+
 </div></div></div>
 </div></body></html>`
 }
