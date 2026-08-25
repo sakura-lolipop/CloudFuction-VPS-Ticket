@@ -6,9 +6,9 @@ REM
 REM  Requires in THIS folder: cf-ticket.exe + private.json (AGC ->
 REM  Project settings -> Service account, auto-scanned) + nssm.exe.
 REM
-REM  Optional: service stops listening on localhost:8091 only; the
+REM  Optional: service stops listening on localhost:12346 only; the
 REM  existing HotifyTunnel config.yml adds one ingress rule to
-REM  expose it publicly (ticket.<domain> -> http://127.0.0.1:8091).
+REM  expose it publicly (ticket.<domain> -> http://127.0.0.1:12346).
 REM
 REM  Re-install (after code update):
 REM    nssm stop HotifyTicketCF && nssm remove HotifyTicketCF confirm
@@ -36,7 +36,7 @@ echo --- Installing HotifyTicketCF (cf-ticket, anonymous mode) ---
 "%NSSM%" install HotifyTicketCF "%cd%\cf-ticket.exe"
 "%NSSM%" set HotifyTicketCF AppDirectory "%cd%"
 REM defaults = anonymous + TTL 600; tighten here if needed
-"%NSSM%" set HotifyTicketCF AppEnvironmentExtra PORT=8091 TICKET_TTL_SECONDS=600
+"%NSSM%" set HotifyTicketCF AppEnvironmentExtra PORT=12346 TICKET_TTL_SECONDS=600
 "%NSSM%" set HotifyTicketCF Start SERVICE_AUTO_START
 "%NSSM%" set HotifyTicketCF AppStdout "%cd%\logs\nssm-ticket.log"
 "%NSSM%" set HotifyTicketCF AppStderr "%cd%\logs\nssm-ticket.log"
@@ -47,5 +47,5 @@ echo --- Starting ---
 "%NSSM%" start HotifyTicketCF
 "%NSSM%" status HotifyTicketCF
 echo.
-echo Done. curl http://localhost:8091/ to verify (3-field JSON).
+echo Done. curl http://localhost:12346/ to verify (3-field JSON).
 pause

@@ -30,8 +30,8 @@ if not exist "*.json" (
     exit /b
 )
 
-set PORT=8091
+set PORT=12346
 set TICKET_TTL_SECONDS=600
-echo Starting Hotify CF-Ticket (anonymous, ttl=600s, port 8091)...
+echo Starting Hotify CF-Ticket (anonymous, ttl=600s, port 12346)...
 cf-ticket.exe
 pause

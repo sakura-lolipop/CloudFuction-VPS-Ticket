@@ -13,8 +13,9 @@ GET/POST /
 Authorization: Bearer <TICKET_AUTH_TOKEN>
 
 → 200 {"ticket": "<PS256 JWT>", "project_id": "<本节点 SA 的 project_id>", "expires_at": <unix秒>}
-→ 401 {"error":"unauthorized"}          # token 错
-→ 429 {"error":"rate_limited"}          # 超过每分钟签发上限（默认 10）
+→ 401 {"error":"unauthorized"}          # 带了 Bearer 且 TICKET_AUTH_TOKEN 设了但不匹配
+→ 403 {"error":"banned"}                # auto-ban 临时封（Retry-After 头给剩余秒数）
+→ 429 {"error":"rate_limited"}          # 超 IP 桶或 token 桶限速
 → 500 {"error":"private_json"|"sign"}   # SA 配置/签名错
 ```
 
@@ -43,28 +44,32 @@ body: {target, payload, pushOptions}    # 华为 v3 原生格式
      - hostname: push.hotify.love
        service: http://127.0.0.1:12345     # 旧中继，原样
      - hostname: ticket.hotify.love        # 新增：铸票
-       service: http://127.0.0.1:8091
+       service: http://127.0.0.1:12346
      - service: http_status:404
    ```
    DNS 一次性：`cloudflared.exe tunnel route dns hotify ticket.hotify.love`（或 CF 控制台加 CNAME）
-5. **验证**：本机 `curl http://localhost:8091/` → 三字段 JSON；外网 `curl https://ticket.hotify.love/` 同
+5. **验证**：本机 `curl http://localhost:12346/` → 三字段 JSON；外网 `curl https://ticket.hotify.love/` 同
 6. （可选，DoS 真防线）CF 控制台给 `ticket.hotify.love` 开一条免费限速规则
 
-Linux VPS 等价：`go build` + systemd + 任意反代指到 8091，逻辑相同。
+Linux VPS 等价：`go build` + systemd + 任意反代指到 12346，逻辑相同。
 
-## 鉴权与滥用策略（演进中，2026-08-25 设计定稿）
+## 鉴权与滥用策略（2026-08-25 设计定稿）
 
-**统一模型**：调用方键三级择一 `who:标签` > `inst:部署uuid`（`X-Hotify-Instance` 头）> `ip:可信IP`（CF-Connecting-IP/RemoteAddr，绝不读客户端自带 XFF）。滥用策略族全查这个键空间：
+**策略栈**（env 全默认关 = 纯匿名直通）：
 
-| 策略 | 语义 | 状态 |
-|---|---|---|
-| 限速 | 每 key 每分钟 N 张（`TICKET_RATE_LIMIT`，**默认 0=无限制**） | ✅ 已实装（env 可调） |
-| 黑名单 ban | key 进表即拒 | 缝已留：ban txt 云端热更（参考 `cloud_function_urls.txt` 基建），滥用出现时上 |
-| 白名单准入 | 一户一 token → who 标签，删行=吊销（旧票活 ≤TTL） | 缝已留：同 txt 基建，公开推广前上 |
+```
+请求 → 身份二分（Bearer 命中 TICKET_AUTH_TOKEN → who:default / 匿名 → ip:addr）
+     → auto-ban 内存临时封（403，固定刑期=strikes 窗口 → 解封即白纸；默认 0=关）
+     → 双桶限速（429，IP 桶宽兜底 + token 桶紧 per-server，分别设置；默认 0=关）
+     → 签票
+```
 
-- **现在：匿名开放**（`TICKET_AUTH_TOKEN` 不设）+ 限速能力待命——测试期配额可控。
-- 三级择一的结构收益：ban ip 时带 instance 头的诚实 Server 不受影响（instance 头=诚实方准白名单通道），裸请求才吃 IP ban。
-- ⚠️ token 真值不能进公开 txt（届时存哈希或私有仓 raw）。
+- **现在：匿名开放**（`TICKET_AUTH_TOKEN` 不设，任何 Bearer 都忽略）——测试期配额可控。
+- 双桶恒记（匿名期 IP 桶独活）：防单 IP 无限刷/多开绕过；token 桶 per-server（token 期生效）。
+- auto-ban：窗口内撞 429 达 N 次自动封该 key（固定刑期，期间请求零记账，到期白纸）。
+- **永久封不设表**（云函数内查表挡不住 DoS——请求到达已耗 invoke）：永久封 IP = Cloudflare 层（不耗配额）；永久封 token = 白名单删行；DoS = CF 限速规则 + txt 摘节点。
+- 白名单终态：云端 txt 热更（`<sha256(token)> <label>`，一户一 token，删行=吊销，旧票活 ≤TTL）。⚠️ token 真值不能进公开 txt。
+- 观察底座：`issue ok` 日志按 `who=`/`ip:` 可数（滥用第一时间可见）。
 
 ## 安全边界（诚实版）
 

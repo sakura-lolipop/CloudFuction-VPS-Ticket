@@ -25,7 +25,7 @@
 //	TICKET_RATE_LIMIT_TOKEN  token 桶每分钟张数（紧，per-server）；默认 0=关
 //	TICKET_AUTO_BAN      窗口内撞 429 达 N 次触发临时封（双桶共用 N 各自分记）；默认 0=关
 //	TICKET_AUTO_BAN_SECONDS  封多久=strikes 窗口（相等→解封即白纸）；默认 600
-//	HOST=127.0.0.1  PORT=8091   （默认只听回环：前面有 Tunnel/nginx 反代；公网直裸再改 0.0.0.0）
+//	HOST=127.0.0.1  PORT=12346   （默认只听回环：前面有 Tunnel/nginx 反代；公网直裸再改 0.0.0.0）
 //
 // 响应契约（调用方 internal/pushkit 按 ticket/project_id/expires_at 三字段消费）：
 //
@@ -67,7 +67,7 @@ const tokenURI = "https://oauth-login.cloud.huawei.com/oauth2/v3/token" // JWT a
 var nowFn = time.Now
 
 func main() {
-	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "8091")
+	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "12346")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleTicket)
