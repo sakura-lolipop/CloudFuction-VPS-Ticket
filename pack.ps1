@@ -1,12 +1,15 @@
-# pack.ps1 —— 一键打 VPS 部署套件 zip（2026-08-25 固化：zip 内容永远从仓现拷，
-# 禁止手攒组装目录——教训：组装目录残留旧 bat，zip 与仓不一致，用户拖到 8091 旧件）。
-# 用法：pwsh pack.ps1 [-Out <zip 路径>]（默认桌面 hotify-ticket.zip）
+# pack.ps1 -- one-shot VPS deploy kit zipper (keep this file ASCII-only:
+# PS 5.1 reads no-BOM UTF-8 as ANSI, non-ASCII comments corrupt parsing).
+# Rule: kit files are ALWAYS copied fresh from the repo; staging dir is
+# rebuilt from scratch every run (lesson 2026-08-25: stale bat in staging
+# shipped an 8091-era file while the repo said 12346).
+# Usage: pwsh pack.ps1 [-Out <zip path>] (default: Desktop\hotify-ticket.zip)
 param([string]$Out = "$env:USERPROFILE\Desktop\hotify-ticket.zip")
 $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 $stage = Join-Path $env:TEMP "hotify-ticket-pack"
 
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }   # 每次全新（核心：绝不复用）
+if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory $stage | Out-Null
 
 go build -o (Join-Path $stage "cf-ticket.exe") .
@@ -16,7 +19,7 @@ Copy-Item (Join-Path $repo "run-ticket.bat") $stage
 Copy-Item (Join-Path $repo "nssm-ticket.bat") $stage
 Copy-Item (Join-Path $repo "DEPLOY.txt") (Join-Path $stage "README.txt")
 
-# nssm.exe：本机 go-harmony 目录借（联邦用户自备或改路径）
+# nssm.exe borrowed from local go-harmony folder (adjust path if needed)
 $nssm = "C:\Users\littl\bark\CloudFuction-vps\harmony\nssm.exe"
 if (Test-Path $nssm) { Copy-Item $nssm $stage } else { Write-Warning "nssm.exe not found at $nssm (kit ships without it)" }
 
