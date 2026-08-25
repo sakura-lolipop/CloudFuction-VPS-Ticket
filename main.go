@@ -317,7 +317,7 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// body 纯动作短语（归因靠列：状态/耗时/IP/method；proj/ttl 恒定值只在 listen 行）
-	reqLog(r, 200, start, who(fmt.Sprintf("✓ issue #%d", issued.Add(1))))
+	reqLog(r, 200, start, who(fmt.Sprintf("✓ ticket #%d", issued.Add(1))))
 	writeJSON(w, 200, map[string]interface{}{
 		"ticket":     jwt,
 		"project_id": acct.ProjectID,

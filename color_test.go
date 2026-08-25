@@ -8,8 +8,8 @@ import (
 // 渲染层测试：锁骨架结构（列序/竖线数）与色开关语义（无色零 ANSI / 有色含 ANSI / 系统行 fallback）。
 
 func TestRenderRequestLineNoColor(t *testing.T) {
-	out := renderLine("2026/08/25 11:01:12 [ticket] 200 630.4µs 1.2.3.4 GET ✓ issue #2", false)
-	want := "2026/08/25 11:01:12 | [ticket]   |  200  |      630us |         1.2.3.4 | GET    ✓ issue #2"
+	out := renderLine("2026/08/25 11:01:12 [ticket] 200 630.4µs 1.2.3.4 GET ✓ ticket #2", false)
+	want := "2026/08/25 11:01:12 | [ticket]   |  200  |      630us |         1.2.3.4 | GET    ✓ ticket #2"
 	if out != want {
 		t.Fatalf("无色请求行:\n got  %q\n want %q", out, want)
 	}
@@ -19,13 +19,13 @@ func TestRenderRequestLineNoColor(t *testing.T) {
 }
 
 func TestRenderRequestLineColor(t *testing.T) {
-	out := renderLine("2026/08/25 11:01:12 [ticket] 200 630.4µs 1.2.3.4 GET ✓ issue #2", true)
+	out := renderLine("2026/08/25 11:01:12 [ticket] 200 630.4µs 1.2.3.4 GET ✓ ticket #2", true)
 	if !strings.Contains(out, "\x1b[") {
 		t.Fatalf("有色模式缺 ANSI")
 	}
 	// 骨架列序在色转义之外也要成立（剥 ANSI 后=无色版）
 	stripped := stripANSI(out)
-	want := "2026/08/25 11:01:12 | [ticket]   |  200  |      630us |         1.2.3.4 | GET    ✓ issue #2"
+	want := "2026/08/25 11:01:12 | [ticket]   |  200  |      630us |         1.2.3.4 | GET    ✓ ticket #2"
 	if stripped != want {
 		t.Fatalf("剥色后:\n got  %q\n want %q", stripped, want)
 	}

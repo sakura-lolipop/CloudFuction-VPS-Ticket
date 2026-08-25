@@ -2,7 +2,7 @@
 // cf-ticket 裁剪+列结构适配）：
 //   · 骨架 `时间 | tag(补宽10) | body` 常开（管道/重定向的 stdout 也是纯文本表格）
 //   · [ticket] 请求行（首 4 token = status dur ip method）再列化：
-//     `时间 | [ticket] |  200  |    630us |       1.2.3.4 | GET  | ✓ issue #2`
+//     `时间 | [ticket] |  200  |    630us |       1.2.3.4 | GET  | ✓ ticket #2`
 //     ——首 token 非 3 位数字（系统行 listen/auto-ban/…）原样走 body，天然 fallback。
 //   · 颜色 TTY 才开（NOCOLOR=1 关 no-color.org / FORCE_COLOR=1 开 mintty / conhost 自动开 VT）：
 //     时间戳暗灰、tag 青、状态/method 白字彩底（gin 组合码）、✓✗⚠🧊 字形色。
@@ -139,7 +139,7 @@ func renderLine(line string, color bool) string {
 }
 
 // ticketColumns [ticket] body → 列竖线 + 色块（调用侧平铺：status dur ip method rest）：
-// `  200  |    630us |       1.2.3.4 | GET  | ✓ issue #2`。duration 显示层 normDur 规整（µ→us）；
+// `  200  |    630us |       1.2.3.4 | GET  | ✓ ticket #2`。duration 显示层 normDur 规整（µ→us）；
 // 首 token 非 3 位数字（系统行）原样返回（兜底，天然 fallback 不列化）。
 func ticketColumns(body string, color bool) string {
 	spans := tokenSpans(body)
