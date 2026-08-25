@@ -158,7 +158,36 @@ func handleConsoleCSS(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(tablerCSS)
 }
 
-// handleConsole /console（免鉴权直接进）；?json=1 出 JSON。
+// consoleCopy i18n 文案（zh 默认 / en；?lang= 切换，照 NEXT-Server /console 的 lang 参数先例）。
+var consoleCopy = map[string]map[string]string{
+	"zh": {
+		"title": "Hotify 铸票台", "brand": "Hotify CF-Ticket",
+		"uptime": "运行", "ttl": "票期", "anon": "匿名", "tokenauth": "token 鉴权",
+		"total": "总签发", "today": "今日签发",
+		"ok": "成功 200", "auth": "鉴权 401", "ban": "封禁 403", "limit": "限流 429", "err": "错误 500",
+		"autoban": "自动封禁",
+		"topip": "拿票最多的 IP", "recent": "最近日志", "newest": "最新在上 · 5 秒自动刷新",
+		"empty": "还没有签发", "switch": "English",
+	},
+	"en": {
+		"title": "Hotify CF-Ticket", "brand": "Hotify CF-Ticket",
+		"uptime": "uptime", "ttl": "ttl", "anon": "anonymous", "tokenauth": "token-auth",
+		"total": "total issued", "today": "today",
+		"ok": "OK 200", "auth": "ERR 401", "ban": "BAN 403", "limit": "LIMIT 429", "err": "ERR 500",
+		"autoban": "auto-ban",
+		"topip": "Top issue IPs", "recent": "Recent log", "newest": "newest first · 5s refresh",
+		"empty": "no issues yet", "switch": "中文",
+	},
+}
+
+func consoleLang(r *http.Request) string {
+	if r.URL.Query().Get("lang") == "en" {
+		return "en"
+	}
+	return "zh" // 默认中文（用户主用）
+}
+
+// handleConsole /console（免鉴权直接进）；?json=1 出 JSON；?lang=en 英文。
 func handleConsole(w http.ResponseWriter, r *http.Request) {
 	snap := takeStatsSnapshot()
 	if r.URL.Query().Get("json") == "1" {
@@ -166,11 +195,16 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, consoleHTML(snap))
+	fmt.Fprint(w, consoleHTML(snap, consoleLang(r)))
 }
 
 // consoleHTML Tabler 单页（骨架照 NEXT-Server /console 同款：page/navbar/card/datagrid）。
-func consoleHTML(s statsSnapshot) string {
+func consoleHTML(s statsSnapshot, lang string) string {
+	c := consoleCopy[lang]
+	mode := c["anon"]
+	if s.Mode == "token-auth" {
+		mode = c["tokenauth"]
+	}
 	stat := func(label string, val string, cls string) string {
 		return `<div class="datagrid"><div class="datagrid-item"><div class="datagrid-content"><div class="text-secondary fs-2">` + label + `</div><div class="fs-1 ` + cls + `">` + val + `</div></div></div></div>`
 	}
@@ -182,44 +216,48 @@ func consoleHTML(s statsSnapshot) string {
 		ipRows.WriteString(`<tr><td>` + html.EscapeString(t.IP) + `</td><td class="text-end">` + strconv.FormatInt(t.Count, 10) + `</td></tr>`)
 	}
 	if ipRows.Len() == 0 {
-		ipRows.WriteString(`<tr><td colspan="2" class="text-secondary">no issues yet</td></tr>`)
+		ipRows.WriteString(`<tr><td colspan="2" class="text-secondary">` + c["empty"] + `</td></tr>`)
 	}
 	logLines := strings.Builder{}
 	for _, ln := range s.Recent {
 		logLines.WriteString(html.EscapeString(asciiize(ln)) + "\n")
 	}
+	switchLang := "en"
+	if lang == "en" {
+		switchLang = "zh"
+	}
 	return `<!doctype html>
-<html lang="zh"><head><meta charset="utf-8">
+<html lang="` + lang + `"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="5">
-<title>Hotify CF-Ticket</title>
+<meta http-equiv="refresh" content="5;url=?lang=` + lang + `">
+<title>` + c["title"] + `</title>
 <link rel="stylesheet" href="/tabler.min.css">
 </head><body>
 <div class="page">
 <nav class="navbar navbar-expand-md navbar-light">
   <div class="container-xl">
-    <h1 class="navbar-brand mb-0 h3">Hotify CF-Ticket</h1>
-    <div class="text-secondary">uptime ` + s.Uptime + ` · ttl=` + strconv.Itoa(s.TTL) + `s · ` + s.Mode + `</div>
+    <h1 class="navbar-brand mb-0 h3">` + c["brand"] + `</h1>
+    <div class="text-secondary">` + c["uptime"] + ` ` + s.Uptime + ` · ` + c["ttl"] + `=` + strconv.Itoa(s.TTL) + `s · ` + mode + ` · <a href="?lang=` + switchLang + `">` + c["switch"] + `</a></div>
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
 <div class="card card-md mb-3">
   <div class="card-body">` +
-	stat("total issued", strconv.FormatInt(s.Issued, 10), "") +
-	stat("today", strconv.FormatInt(s.IssuedToday, 10), "") +
-	statusCell(200, "OK 200", "text-blue") +
-	statusCell(401, "ERR 401", "text-orange") +
-	statusCell(403, "BAN 403", "text-orange") +
-	statusCell(429, "LIMIT 429", "text-orange") +
-	statusCell(500, "ERR 500", "text-red") +
-	stat("auto-ban", strconv.FormatInt(s.Bans, 10), "text-secondary") +
+	stat(c["total"], strconv.FormatInt(s.Issued, 10), "") +
+	stat(c["today"], strconv.FormatInt(s.IssuedToday, 10), "") +
+	statusCell(200, c["ok"], "text-blue") +
+	statusCell(401, c["auth"], "text-orange") +
+	statusCell(403, c["ban"], "text-orange") +
+	statusCell(429, c["limit"], "text-orange") +
+	statusCell(500, c["err"], "text-red") +
+	stat(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary") +
 	`</div></div>
 <div class="card card-md mb-3">
-  <div class="card-header"><h3 class="card-title">Top issue IPs</h3></div>
+  <div class="card-header"><h3 class="card-title">` + c["topip"] + `</h3></div>
   <div class="table-responsive"><table class="table table-vcenter card-table">` + ipRows.String() + `</table></div>
 </div>
 <div class="card card-md">
-  <div class="card-header"><h3 class="card-title">Recent log</h3><div class="card-actions text-secondary">newest first · 5s refresh</div></div>
+  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions text-secondary">` + c["newest"] + `</div></div>
   <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:360px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
 </div>
 </div></div></div>
