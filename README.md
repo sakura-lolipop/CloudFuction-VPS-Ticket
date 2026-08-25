@@ -9,7 +9,7 @@ Hotify CF 2.0 **铸票厂**（VPS 形态）：验 token → 用华为 Service Ac
 ## 契约
 
 ```
-GET/POST /
+POST /（GET 返回说明页，零 RSA——爬虫不烧签名）
 Authorization: Bearer <TICKET_AUTH_TOKEN>
 
 → 200 {"ticket": "<PS256 JWT>", "project_id": "<本节点 SA 的 project_id>", "expires_at": <unix秒>}

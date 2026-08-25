@@ -2,7 +2,7 @@ Hotify CF 2.0 cf-ticket deploy kit (VPS, Windows)
 =================================================
 
 Repo: https://github.com/sakura-lolipop/CloudFuction-VPS-Ticket
-API contract: GET/POST / -> {"ticket","project_id","expires_at"} (short-exp
+API contract: POST /（GET 返回说明页，零 RSA——爬虫不烧签名） -> {"ticket","project_id","expires_at"} (short-exp
 PS256 JWT; caller uses it as Bearer to push-api directly). 401 bad Bearer /
 403 auto-ban (Retry-After) / 429 rate limited / 500 SA error.
 
@@ -51,7 +51,7 @@ Tunnel (reuse existing HotifyTunnel, no new process)
      close the tunnel window and re-run tunnel.bat
    (or: nssm restart HotifyTunnel)
 
-Verify: curl https://ticket.<your-domain>/ -> 3-field JSON
+Verify: curl -X POST https://ticket.<your-domain>/ -> 3-field JSON (GET returns an info page)
 
 Troubleshooting
 ---------------

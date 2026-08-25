@@ -297,9 +297,19 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
-	case http.MethodGet, http.MethodPost, http.MethodHead:
+	case http.MethodGet, http.MethodHead:
+		// GET=说明页（零 RSA）：爬虫/浏览器直开不再白烧签名（卡巴 cerebro 扫新域名事件，
+		// 2026-08-25）。取凭证是动作，POST 才签——REST 正确形态。
+		writeJSON(w, 200, map[string]string{
+			"service": "hotify-ticket",
+			"hint":    "POST / to get a ticket {ticket, project_id, expires_at}",
+			"console": "/console",
+			"health":  "/health",
+		})
+		return
+	case http.MethodPost:
 	default:
-		w.Header().Set("Allow", "GET, POST, HEAD")
+		w.Header().Set("Allow", "GET, POST")
 		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
 		return
 	}

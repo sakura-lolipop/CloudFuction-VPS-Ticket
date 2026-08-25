@@ -30,7 +30,7 @@ func TestTicketContractAnonymous(t *testing.T) {
 	genTestSA(t)
 	os.Unsetenv("TICKET_AUTH_TOKEN") // 匿名（当前默认）；限速/auto-ban 全默认关=直通
 
-	rec := doTicket(httptest.NewRequest("GET", "/", nil))
+	rec := doTicket(httptest.NewRequest("POST", "/", nil))
 	if rec.Code != 200 {
 		t.Fatalf("匿名直通 = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -43,20 +43,20 @@ func TestAuth(t *testing.T) {
 	os.Setenv("TICKET_AUTH_TOKEN", "sec123")
 	t.Cleanup(func() { os.Unsetenv("TICKET_AUTH_TOKEN") })
 
-	req := httptest.NewRequest("GET", "/", nil)
+	req := httptest.NewRequest("POST", "/", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	if rec := doTicket(req); rec.Code != 401 {
 		t.Fatalf("错 token = %d, want 401", rec.Code)
 	}
 
-	req = httptest.NewRequest("GET", "/", nil)
+	req = httptest.NewRequest("POST", "/", nil)
 	req.Header.Set("Authorization", "Bearer sec123")
 	if rec := doTicket(req); rec.Code != 200 {
 		t.Fatalf("对 token = %d, want 200", rec.Code)
 	}
 
 	// 设了 TICKET_AUTH_TOKEN 但请求没带头 → 匿名放行（IP 记账；单 token 期不强制）
-	if rec := doTicket(httptest.NewRequest("GET", "/", nil)); rec.Code != 200 {
+	if rec := doTicket(httptest.NewRequest("POST", "/", nil)); rec.Code != 200 {
 		t.Fatalf("无头（token 设了）= %d, want 200", rec.Code)
 	}
 }
