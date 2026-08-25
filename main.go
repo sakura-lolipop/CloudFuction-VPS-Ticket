@@ -69,17 +69,25 @@ var nowFn = time.Now
 
 func main() {
 	ensureConfigFile() // 首次启动生成带注释的默认 config.yml（自文档）
-	addr := orDefault(cfgGet("host"), "127.0.0.1") + ":" + orDefault(cfgGet("port"), "12346") // 静态：改 config.yml 的 host/port 要重启
+	port := orDefault(cfgGet("port"), "12346")
+	if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
+		port = "12346" // port: 0/垃圾静默绑随机端口的坑（对抗审 F），拒之回落默认
+	}
+	addr := orDefault(cfgGet("host"), "127.0.0.1") + ":" + port // 静态：改 config.yml 的 host/port 要重启
 
 	// 三腿（对齐 NEXT-Server log.md 模式）：stdout 着色渲染（TTY 才开色）+ logs\ticket.log 原样
-	// 纯文本（ANSI 不落盘、grep 友好）+ ring（/stats 面板黑窗回放）。文件腿打不开退 stdout-only。
+	// 纯文本（ANSI 不落盘、grep 友好）+ ring（/console 面板黑窗回放）。文件腿打不开退 stdout-only。
+	// 锚 exe 目录（与 SA 扫描同根——CWD 跟启动方式走的"改配置无效"族根治，对抗审 P1）。
 	logOutput := io.Writer(io.MultiWriter(NewColorWriter(os.Stdout, ColorEnabled()), ringWriter{}))
-	if err := os.MkdirAll("logs", 0755); err == nil {
-		if f, err := os.OpenFile("logs"+string(os.PathSeparator)+"ticket.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+	logPath := filepath.Join(exeDir(), "logs", "ticket.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err == nil {
+		if f, err := openLogRotate(logPath); err == nil {
 			logOutput = io.MultiWriter(logOutput, f)
 		} else {
-			log.Printf("[ticket] ⚠ open logs/ticket.log failed: %v (stdout only)", err)
+			log.Printf("[ticket] ⚠ open %s failed: %v (stdout only)", logPath, err)
 		}
+	} else {
+		log.Printf("[ticket] ⚠ mkdir %s failed: %v (stdout only)", filepath.Dir(logPath), err)
 	}
 	log.SetOutput(logOutput)
 
@@ -89,11 +97,19 @@ func main() {
 	mux.HandleFunc("/tabler.min.css", handleConsoleCSS)
 	mux.HandleFunc("/hotify-icon.png", handleConsoleIcon)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		// SA 探针（对抗审 P1：假绿探针——SA 坏是唯一"活着但残废"的故障，health 必须看见）。
+		// loadSA 有 sync.Once 缓存，零成本。
+		ok, proj := true, "-"
+		if acct, err := loadSA(); err != nil {
+			ok = false
+		} else {
+			proj = acct.ProjectID
+		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"ok":true}`)
+		fmt.Fprintf(w, `{"ok":%v,"proj":%q}`+"\n", ok, proj)
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		mode := "anonymous"
 		if ticketAuthToken() != "" {
@@ -118,6 +134,29 @@ func main() {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+}
+
+// exeDir exe 所在目录（EvalSymlinks 容错；失败回落 "."）。config/logs 锚此——与 SA 扫描同根。
+func exeDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	if d, err := filepath.EvalSymlinks(exe); err == nil {
+		return filepath.Dir(d)
+	}
+	return filepath.Dir(exe)
+}
+
+// openLogRotate 打开日志文件（带单代轮转：超 10MB 时 rename 成 .1 重开——P0 对抗审：bot 探测
+// 每行 90-120B，无上限最坏 GB 级/年盘满杀同机全家，且 Windows 运行中锁文件没法手动清）。
+func openLogRotate(path string) (*os.File, error) {
+	const maxSize = 10 << 20 // 10MB
+	if fi, err := os.Stat(path); err == nil && fi.Size() >= maxSize {
+		_ = os.Remove(path + ".1")         // 保留一代（旧 .1 让位）
+		_ = os.Rename(path, path+".1")     // rename 失败（极罕见）则继续追加原文件，不挡服务
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 }
 
 // reqLog 请求行平铺日志（渲染层按 [ticket]+首4token 列化）+ /stats 记账（单一真相：所有请求
@@ -251,6 +290,19 @@ func resetGuard() {
 // ── 票据签发 handler ──
 
 func handleTicket(w http.ResponseWriter, r *http.Request) {
+	// 对抗审 P2：路径精确匹配 + method 白名单——catch-all 让 bot 任意探测路径全 200（RSA 白签
+	// +日志放大+鼓励枚举）。签票口就是根路径，GET/POST/HEAD。
+	if r.URL.Path != "/" {
+		writeJSON(w, 404, map[string]string{"error": "not found"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodPost, http.MethodHead:
+	default:
+		w.Header().Set("Allow", "GET, POST, HEAD")
+		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
+		return
+	}
 	start := nowFn()
 	id, ok := resolveIdentity(r)
 	if !ok {
@@ -458,7 +510,12 @@ func resolvePrivateJSON() string {
 
 // ── 配置小件（config.yml > env > 默认，见 config.go；除 port/host 外全热加载）──
 
-func ticketTTLSeconds() int { return cfgInt("ttl", 600, 3600) }
+func ticketTTLSeconds() int {
+	if v := cfgInt("ttl", 600, 3600); v >= 1 {
+		return v
+	}
+	return 600 // ttl:0 → 票出生即过期（exp==iat 华为必拒、服务侧全绿）——下限 1 无人认领即回落（对抗审 F1）
+}
 
 func ticketRateLimitIP() int    { return cfgInt("rate_limit_ip", 0, 0) }
 func ticketRateLimitToken() int { return cfgInt("rate_limit_token", 0, 0) }

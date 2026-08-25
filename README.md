@@ -37,7 +37,7 @@ body: {target, payload, pushOptions}    # 华为 v3 原生格式
 
 1. **编译**（Windows VPS 直接原生件）：本仓目录 `go build -o cf-ticket.exe .`
 2. **建独立目录**（如 `C:\hotify\cf-ticket\`）：放 `cf-ticket.exe` + `nssm-ticket.bat` + 你的 `private.json`（华为 AGC → 项目设置 → 服务账号；同目录自动扫描；与 go-harmony 各持一份副本，SA 轮换互不牵连）
-3. **NSSM 注册**：管理员运行 `nssm-ticket.bat`（装 `HotifyTicketCF` 服务，匿名模式 + TTL 600，env 在脚本里改）
+3. **NSSM 注册**：管理员运行 `nssm-ticket.bat`（装 `HotifyTicketCF` 服务，匿名模式 + TTL 600，全部配置走 config.yml（热加载））
 4. **Tunnel 复用**：不动现有 `HotifyTunnel` 服务，只改它的 `config.yml` 加一条 ingress 后重启服务：
    ```yaml
    ingress:
@@ -74,7 +74,7 @@ Linux VPS 等价：`go build` + systemd + 任意反代指到 12346，逻辑相�
 ## 安全边界（诚实版）
 
 - **匿名期风险**：任何知道 URL 的人都能拿票给该 SA 应用的 token 发推——量小可控（配额消耗/内容落项目档案）；触发线到（公开推广）前切白名单。
-- `TICKET_AUTH_TOKEN` 是**纸墙**：防扫描器白嫖签发配额，不防看得到你调用方配置的人。真要锁死须网络层（Tunnel Access / 内网）。
+- `TICKET_AUTH_TOKEN`（准确描述，对齐当前实现）：设了只校验**带 Bearer 的请求**（抓调用方配置错），**不带头仍匿名放行**——不防白嫖。真要锁死须网络层（Tunnel Access / 内网）或等白名单。
 - SA 私钥泄露 = 该 Push Kit 应用全权暴露。泄露应对：AGC 重新生成服务账号私钥 → 更新本服务 → 旧私钥（及它签过的票）全部作废。
 - 停止签发即吊销未来；已签出票最多活 TTL。
 

@@ -1,12 +1,18 @@
 Hotify CF 2.0 cf-ticket deploy kit (VPS, Windows)
 =================================================
 
+Repo: https://github.com/sakura-lolipop/CloudFuction-VPS-Ticket
+API contract: GET/POST / -> {"ticket","project_id","expires_at"} (short-exp
+PS256 JWT; caller uses it as Bearer to push-api directly). 401 bad Bearer /
+403 auto-ban (Retry-After) / 429 rate limited / 500 SA error.
+
 Files in this kit (plus private.json you add):
 
   cf-ticket.exe     ticket signer (single Go binary; /console panel included)
   run-ticket.bat    foreground launcher (same style as go-harmony run.bat)
   nssm-ticket.bat   optional: install as Windows service (auto-start)
-  nssm.exe          service installer (if missing, copy from go-harmony folder)
+  nssm.exe          service installer (if missing: download from
+                    https://nssm.cc or github nssm releases)
   README.txt        this file
 
 [One more file needed] private.json -- copy from your AGC project
@@ -14,14 +20,24 @@ Files in this kit (plus private.json you add):
 content is auto-scanned (must contain a PRIVATE KEY value). Credentials never
 ship inside the zip/git on purpose.
 
+Config: config.yml (auto-created next to the exe on first start, values are
+hot-reloaded -- edit & save, no restart; only host/port need restart).
+All knobs live there: ttl / auth_token / rate_limit_ip / rate_limit_token /
+auto_ban / auto_ban_seconds. Env vars (TICKET_TTL_SECONDS etc.) are the
+fallback layer below the file.
+
 Start
 -----
 Double-click run-ticket.bat. Expect:
-  Starting Hotify CF-Ticket (anonymous, ttl=600s, port 12346)...
+  Starting Hotify CF-Ticket (see config.yml for port/ttl/limits)...
   <date> | [ticket]   | listen 127.0.0.1:12346 (ttl=600s proj=... anonymous)
 
-Panel: open http://127.0.0.1:12346/console in a browser
-(?lang=en for English, ?json=1 for JSON). Local log file: logs\ticket.log.
+NOTE (foreground window): clicking into the console window (Quick Edit
+selection) FREEZES the service until you press a key. For unattended
+long-term running use nssm-ticket.bat instead.
+
+Panel: http://127.0.0.1:12346/console (?lang=en English, ?json=1 JSON).
+Local log: logs\ticket.log next to the exe (rotates at 10MB, keeps one .1).
 
 Tunnel (reuse existing HotifyTunnel, no new process)
 ----------------------------------------------------
@@ -36,15 +52,19 @@ Tunnel (reuse existing HotifyTunnel, no new process)
    (or: nssm restart HotifyTunnel)
 
 Verify: curl https://ticket.<your-domain>/ -> 3-field JSON
-        (ticket / project_id / expires_at)
 
-Optional hardening
-------------------
-- run-ticket.bat / nssm-ticket.bat env lines: TICKET_RATE_LIMIT_IP=100,
-  TICKET_AUTO_BAN=5 (defaults are 0 = unlimited; see repo README)
-- Cloudflare rate-limit rule on ticket.<your-domain> (real DoS line)
+Troubleshooting
+---------------
+- All-green locally but pushes rejected by Huawei: check VPS clock sync
+  (clock drift breaks iat/exp).
+- Fixed/added private.json after a 500 streak: RESTART the service (SA load
+  is cached for the process lifetime).
+- Config edits seem ignored: config.yml lives NEXT TO THE EXE (not your
+  working directory).
 
 Upgrade
 -------
-Replace cf-ticket.exe, restart (window: re-run bat; service: nssm restart
-HotifyTicketCF).
+Windows locks a running exe: stop first.
+  window mode : close the window -> replace cf-ticket.exe -> re-run bat
+  service mode: nssm stop HotifyTicketCF -> replace exe -> nssm start
+Tickets are stateless; in-flight callers just re-fetch.

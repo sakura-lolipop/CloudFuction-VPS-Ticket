@@ -3,8 +3,9 @@
 # Rule: kit files are ALWAYS copied fresh from the repo; staging dir is
 # rebuilt from scratch every run (lesson 2026-08-25: stale bat in staging
 # shipped an 8091-era file while the repo said 12346).
-# Usage: pwsh pack.ps1 [-Out <zip path>] (default: Desktop\hotify-ticket.zip)
-param([string]$Out = "$env:USERPROFILE\Desktop\hotify-ticket.zip")
+# Usage: pwsh pack.ps1 [-Out <zip path>] [-Nssm <path to nssm.exe>]
+#   (defaults: Desktop\hotify-ticket.zip; nssm probed from repo folder first)
+param([string]$Out = "$env:USERPROFILE\Desktop\hotify-ticket.zip", [string]$Nssm = "")
 $ErrorActionPreference = "Stop"
 $repo = $PSScriptRoot
 $stage = Join-Path $env:TEMP "hotify-ticket-pack"
@@ -19,9 +20,14 @@ Copy-Item (Join-Path $repo "run-ticket.bat") $stage
 Copy-Item (Join-Path $repo "nssm-ticket.bat") $stage
 Copy-Item (Join-Path $repo "DEPLOY.txt") (Join-Path $stage "README.txt")
 
-# nssm.exe borrowed from local go-harmony folder (adjust path if needed)
-$nssm = "C:\Users\littl\bark\CloudFuction-vps\harmony\nssm.exe"
-if (Test-Path $nssm) { Copy-Item $nssm $stage } else { Write-Warning "nssm.exe not found at $nssm (kit ships without it)" }
+# nssm.exe: -Nssm explicit path > repo folder > local go-harmony fallback >
+# ship without (public repo must not hardcode personal paths).
+if ($Nssm -eq "") { $Nssm = Join-Path $repo "nssm.exe" }
+if (-not (Test-Path $Nssm)) {
+    $fallback = "C:\Users\littl\bark\CloudFuction-vps\harmony\nssm.exe"
+    if (Test-Path $fallback) { $Nssm = $fallback }
+}
+if (Test-Path $Nssm) { Copy-Item $Nssm $stage } else { Write-Warning "nssm.exe not found (kit ships without it; download from nssm.cc)" }
 
 if (Test-Path $Out) { Remove-Item -Force $Out }
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $Out

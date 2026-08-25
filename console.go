@@ -10,6 +10,7 @@ import (
 	_ "embed"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -198,6 +199,7 @@ var consoleCopy = map[string]map[string]string{
 		"total": "累计签发", "today": "今日签发",
 		"ok": "成功", "auth": "鉴权失败", "ban": "封禁拦截", "limit": "触发限流", "err": "服务错误",
 		"autoban": "自动封禁",
+		"topip": "签发来源", "recent": "实时日志",
 		"iphead": "IP", "counthead": "签发次数",
 		"refresh": "刷新", "autorefresh": "自动刷新", "autorefreshon": "自动刷新中",
 		"empty": "暂无签发", "switch": "English",
@@ -208,6 +210,7 @@ var consoleCopy = map[string]map[string]string{
 		"total": "total issued", "today": "today",
 		"ok": "Success", "auth": "Unauthorized", "ban": "Banned", "limit": "Rate limited", "err": "Server error",
 		"autoban": "auto-ban",
+		"topip": "Top sources", "recent": "Live log",
 		"iphead": "IP", "counthead": "tickets",
 		"refresh": "Refresh", "autorefresh": "Auto refresh", "autorefreshon": "auto-refreshing",
 		"empty": "no tickets yet", "switch": "中文",
@@ -222,10 +225,13 @@ func consoleLang(r *http.Request) string {
 }
 
 // humanDur 顶栏人性化时长（取最高两档，末位 0 省略）：26h→"1 天 2 小时"，1h3m→"1 小时 3 分"，
-// 10m→"10 分钟"（不带"0 秒"），45s→"45 秒"。Duration 原样太机器味。
+// 10m→"10 分钟"（不带"0 秒"），45s→"45 秒"，0→"0 秒"。Duration 原样太机器味。
 func humanDur(d time.Duration, lang string) string {
 	zh := lang == "zh"
 	u := func(n int, z, e string) string {
+		if n == 0 {
+			return "" // 末位 0 省略（pick 滤空；对抗审 F6：注释宣称了没实现）
+		}
 		if zh {
 			return strconv.Itoa(n) + " " + z
 		}
@@ -241,24 +247,15 @@ func humanDur(d time.Duration, lang string) string {
 				out = append(out, p)
 			}
 		}
+		if len(out) == 0 {
+			if zh {
+				return "0 秒"
+			}
+			return "0s"
+		}
 		return strings.Join(out, " ")
 	}
-	mz := u(mins, "分钟", "m")
-	if zh && mins > 0 {
-		mz = strconv.Itoa(mins) + " 分钟"
-	}
-	sec := u(secs, "秒", "s")
-	minShort := u(mins, "分", "m")
-	switch {
-	case days > 0:
-		return pick(u(days, "天", "d"), u(hours, "小时", "h"))
-	case hours > 0:
-		return pick(u(hours, "小时", "h"), minShort)
-	case mins > 0:
-		return pick(mz, sec)
-	default:
-		return sec
-	}
+	return pick(u(days, "天", "d"), u(hours, "小时", "h"), u(mins, "分钟", "m"), u(secs, "秒", "s"))
 }
 
 // humanTTL 票期人性化：600s→"10 分钟"/"10 min"；90s→"90 秒"/"90 s"（zh 不落拉丁单位，对抗审修）。
@@ -321,8 +318,8 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	if s.Mode == "token-auth" {
 		mode = c["tokenauth"]
 	}
-	if h, _, ok := strings.Cut(host, ":"); ok && h != "" {
-		host = h // 截端口（localhost:12346→localhost；观感，非安全面）
+	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
+		host = h // 截端口（localhost:12346→localhost；SplitHostPort 保 IPv6 [::1] 不切坏——对抗审 F5）
 	}
 	// statCard 平铺卡片：subheader 人话题（不带码）+ 大数字 + 语义色码角标（状态卡）。
 	statCard := func(label, val, h1cls, badge, badgeCls string) string {
@@ -358,7 +355,7 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 		refreshMeta = `<meta http-equiv="refresh" content="` + strconv.Itoa(refresh) + `;url=` + q + `">`
 	}
 	manualLink := pageQuery(rawQuery, nil) // 刷新按钮=原地（保当前 query）
-	autoLink := pageQuery(rawQuery, nil)   // 恢复自动=去 refresh（回落默认 5）
+	autoLink := pageQuery(rawQuery, map[string]string{"refresh": ""}) // 恢复自动=Del refresh（回落默认 5）——传 nil 不删键=暂停死路（对抗审 F4）
 	pauseLink := pageQuery(rawQuery, map[string]string{"refresh": "0"}) // 暂停（显式 0 粘滞）
 	// 刷新控制族全按钮化（单一真相：三态同款 btn-outline-secondary，无文字链混杂）
 	refreshBtns := `<a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary">` + c["refresh"] + `</a>`
