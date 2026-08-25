@@ -70,9 +70,9 @@ var nowFn = time.Now
 func main() {
 	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "12346")
 
-	// 双腿（对齐 NEXT-Server log.md 模式）：stdout 着色渲染（TTY 才开色）+ logs\ticket.log 原样
-	// 纯文本（ANSI 不落盘、grep 友好）。文件腿打不开退 stdout-only（不因日志故障拒服务）。
-	logOutput := io.Writer(NewColorWriter(os.Stdout, ColorEnabled()))
+	// 三腿（对齐 NEXT-Server log.md 模式）：stdout 着色渲染（TTY 才开色）+ logs\ticket.log 原样
+	// 纯文本（ANSI 不落盘、grep 友好）+ ring（/stats 面板黑窗回放）。文件腿打不开退 stdout-only。
+	logOutput := io.Writer(io.MultiWriter(NewColorWriter(os.Stdout, ColorEnabled()), ringWriter{}))
 	if err := os.MkdirAll("logs", 0755); err == nil {
 		if f, err := os.OpenFile("logs"+string(os.PathSeparator)+"ticket.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 			logOutput = io.MultiWriter(logOutput, f)
@@ -84,6 +84,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleTicket)
+	mux.HandleFunc("/console", handleConsole)
+	mux.HandleFunc("/tabler.min.css", handleConsoleCSS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"ok":true}`)
@@ -116,10 +118,11 @@ func main() {
 	_ = srv.Shutdown(shutCtx)
 }
 
-// reqLog 请求行平铺日志（渲染层按 [ticket]+首4token 列化）：
-// [ticket] <status> <dur> <ip> <method> <body 动作短语>（who 匿名期省略，非匿名尾缀）。
+// reqLog 请求行平铺日志（渲染层按 [ticket]+首4token 列化）+ /stats 记账（单一真相：所有请求
+// 终态必经此，漏一个分支=面板少一类数）。[ticket] <status> <dur> <ip> <method> <body>。
 func reqLog(r *http.Request, status int, start time.Time, body string) {
 	log.Printf("[ticket] %d %s %s %s %s", status, nowFn().Sub(start), clientIP(r), r.Method, body)
+	statsRecord(status, clientIP(r), status == http.StatusOK)
 }
 
 // ── 身份二分（许可策略族的单一真相键空间）──
@@ -287,7 +290,7 @@ func handleTicket(w http.ResponseWriter, r *http.Request) {
 			banned = id.tokenKey
 		}
 		if banned != "" {
-			log.Printf("[ticket] ⚠ auto-ban %s exp=%s", banned, autoBanTTL().Truncate(time.Second))
+			log.Printf("[ticket] ⚠ auto-ban %s exp=%s", banned, autoBanTTL().Truncate(time.Second)); statsRecordBan()
 		}
 		guardMu.Unlock()
 		reqLog(r, 429, start, who("⚠ rate limit"))
