@@ -184,7 +184,6 @@ var consoleCopy = map[string]map[string]string{
 		"total": "累计签发", "today": "今日签发",
 		"ok": "成功", "auth": "鉴权失败", "ban": "封禁拦截", "limit": "触发限流", "err": "服务错误",
 		"autoban": "自动封禁",
-		"topip": "签发请求最多的 IP", "recent": "最近日志", "newest": "新→旧",
 		"iphead": "IP", "counthead": "签发次数",
 		"refresh": "刷新", "autorefresh": "自动刷新", "autorefreshon": "自动刷新中",
 		"empty": "暂无签发", "switch": "English",
@@ -195,7 +194,6 @@ var consoleCopy = map[string]map[string]string{
 		"total": "total issued", "today": "today",
 		"ok": "Success", "auth": "Unauthorized", "ban": "Banned", "limit": "Rate limited", "err": "Server error",
 		"autoban": "auto-ban",
-		"topip": "Top IPs", "recent": "Recent log", "newest": "new → old",
 		"iphead": "IP", "counthead": "tickets",
 		"refresh": "Refresh", "autorefresh": "Auto refresh", "autorefreshon": "auto-refreshing",
 		"empty": "no tickets yet", "switch": "中文",
@@ -275,14 +273,18 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, consoleHTML(snap, consoleLang(r), r.Host, r.URL.RawQuery, refresh))
 }
 
-// toggleRefreshQuery 当前 query 重设 refresh 参数（暂停/恢复/语言切换保参数粘滞；val<0=删参数）。
+// pageQuery 页面链接的单一构造器（2026-08-25 收拢：此前 lang 手拼+toggleRefreshQuery 散置 3 个
+// 半写者，en 页 query 已带 lang=en 再拼 &lang=zh 成双值，Get 永读第一个→切不回中文）。
+// 幂等：set 的键先 Del 再 Set（单值保证），其余参数原样保留。
 // ⚠️ q 必须来自 parseRawQuery（ParseQuery 返非 nil map）——new(url.Values) 是 nil map 指针，
-// Add 即 panic（2026-08-25 /console 空回复事故根因，console_repro_test 锁回归）。
-func toggleRefreshQuery(rawQuery string, refreshVal int) string {
+// Add 即 panic（2026-08-25 /console 空回复事故根因，console_test 锁回归）。
+func pageQuery(rawQuery string, set map[string]string) string {
 	q := parseRawQuery(rawQuery)
-	q.Del("refresh")
-	if refreshVal >= 0 {
-		q.Set("refresh", strconv.Itoa(refreshVal))
+	for k, v := range set {
+		q.Del(k)
+		if v != "" {
+			q.Set(k, v)
+		}
 	}
 	link := q.Encode()
 	if link == "" {
@@ -292,8 +294,8 @@ func toggleRefreshQuery(rawQuery string, refreshVal int) string {
 }
 
 func parseRawQuery(raw string) url.Values {
-	v, _ := url.ParseQuery(raw)
-	return v
+	vals, _ := url.ParseQuery(raw)
+	return vals
 }
 
 // consoleHTML Tabler 单页（骨架照 NEXT-Server /console；对抗审终稿：状态卡 label 不带码——
@@ -320,8 +322,8 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 		return statCard(label, strconv.FormatInt(s.Status[code], 10), h1cls, strconv.Itoa(code), badgeCls)
 	}
 	ipRows := strings.Builder{}
-	for _, t := range s.TopIPs {
-		ipRows.WriteString(`<tr><td>` + html.EscapeString(t.IP) + `</td><td class="text-end">` + strconv.FormatInt(t.Count, 10) + `</td></tr>`)
+	for _, row := range s.TopIPs {
+		ipRows.WriteString(`<tr><td>` + html.EscapeString(row.IP) + `</td><td class="text-end">` + strconv.FormatInt(row.Count, 10) + `</td></tr>`)
 	}
 	if ipRows.Len() == 0 {
 		ipRows.WriteString(`<tr><td colspan="2" class="text-secondary">` + c["empty"] + `</td></tr>`)
@@ -334,18 +336,22 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	if lang == "en" {
 		switchLang = "zh"
 	}
-	langQuery := toggleRefreshQuery(rawQuery+"&lang="+switchLang, refresh) // 语言切换保 refresh 值粘滞（暂停态不掉回默认）
+	// 所有链接从 pageQuery 单一构造器出（幂等 set，双值根杀）；空值=Del 该键（langQuery 去掉参数回落默认 zh）。
+	langQuery := pageQuery(rawQuery, map[string]string{"lang": switchLang, "refresh": strconv.Itoa(refresh)})
 	refreshMeta := ""
 	if refresh > 0 {
-		q := toggleRefreshQuery(rawQuery, refresh)
+		q := pageQuery(rawQuery, nil)
 		refreshMeta = `<meta http-equiv="refresh" content="` + strconv.Itoa(refresh) + `;url=` + q + `">`
 	}
-	manualLink := toggleRefreshQuery(rawQuery, refresh) // 刷新按钮=原地（保当前 refresh 态）
-	autoLink := toggleRefreshQuery(rawQuery, 5)         // 恢复自动
-	pauseLink := toggleRefreshQuery(rawQuery, 0)        // 暂停（显式 0 粘滞，去掉参数会回落默认 5）
-	newestNote := c["newest"]
+	manualLink := pageQuery(rawQuery, nil) // 刷新按钮=原地（保当前 query）
+	autoLink := pageQuery(rawQuery, nil)   // 恢复自动=去 refresh（回落默认 5）
+	pauseLink := pageQuery(rawQuery, map[string]string{"refresh": "0"}) // 暂停（显式 0 粘滞）
+	// 刷新控制族全按钮化（单一真相：三态同款 btn-outline-secondary，无文字链混杂）
+	refreshBtns := `<a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary">` + c["refresh"] + `</a>`
 	if refresh > 0 {
-		newestNote += ` · <a href="` + pauseLink + `">` + c["autorefreshon"] + ` ⏸</a>`
+		refreshBtns += ` <a href="` + pauseLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefreshon"] + ` ⏸</a>`
+	} else {
+		refreshBtns += ` <a href="` + autoLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefresh"] + `</a>`
 	}
 	return `<!doctype html>
 <html lang="` + lang + `"><head><meta charset="utf-8">
@@ -360,7 +366,6 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
     <span class="navbar-brand"><img src="/hotify-icon.png" alt="" style="width:2rem;height:2rem;border-radius:.375rem;vertical-align:-.5rem"> ` + c["brand"] + `</span>
     <div class="d-flex flex-wrap gap-1 align-items-center">
       <span class="badge bg-blue-lt">` + html.EscapeString(host) + `</span>
-      <span class="badge bg-cyan-lt">` + c["project"] + ` ` + maskProject(s.ProjectID) + `</span>
       <span class="badge bg-secondary-lt">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span>
       <span class="badge bg-secondary-lt">` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
       <span class="badge bg-lime-lt">` + mode + `</span>
@@ -385,17 +390,7 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
   <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>` + ipRows.String() + `</table></div>
 </div>
 <div class="card card-sm">
-  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions">
-    <a href="` + manualLink + `" class="btn btn-sm btn-outline-secondary">` + c["refresh"] + `</a>
-    <span class="text-secondary ms-2">` + newestNote + `</span>` +
-	func() string {
-		if refresh <= 0 {
-			return `
-    <a href="` + autoLink + `" class="btn btn-sm btn-outline-secondary">` + c["autorefresh"] + `</a>`
-		}
-		return ""
-	}() + `
-  </div></div>
+  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions">` + refreshBtns + `</div></div>
   <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
 </div>
 </div></div></div>
