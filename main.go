@@ -12,14 +12,14 @@
 //	     → auto-ban 内存临时封（403，固定刑期 TTL 自解；TICKET_AUTO_BAN=0 关）
 //	     → 双桶限速（429，IP 桶兜底防多开 + token 桶 per-server；各=0 关）
 //	     → 签票
-//	永久封 IP = Cloudflare 层（不耗 invoke）；永久封 token = 白名单删行；DoS = CF 限速 + txt 摘节点。
+//	永久封 IP = Cloudflare 层（不耗 invoke）；DoS = CF 限速 + txt 摘节点。滥用治理=速率维度（限速/auto-ban/CF），非身份准入。
 //	（云函数内不设 txt 封禁表：请求到达已耗配额，挡不住 DoS，纯负资产。）
 //
 // env：
 //
 //	PRIVATE_JSON / PRIVATE_JSON_FILE  service account key（都不设→扫同目录含 PRIVATE KEY 的 .json）
 //	TICKET_AUTH_TOKEN   名单最小载体：设了=单 token 验证（Bearer 匹配→who:default；不匹配→401）；
-//	                    不设=匿名开放（当前模式）。终态=云端 txt 白名单热更（sha256+label）。
+//	                    不设=匿名开放（**产品终态**：默认开放给所有人——滥用走速率治理非身份准入）。
 //	TICKET_TTL_SECONDS  票有效期 1~3600，默认 600（canary 实测 30/300/600 均被华为接受 80000000）
 //	TICKET_RATE_LIMIT_IP     IP 桶每分钟张数（宽，防多开兜底）；默认 0=关
 //	TICKET_RATE_LIMIT_TOKEN  token 桶每分钟张数（紧，per-server）；默认 0=关
