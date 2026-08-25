@@ -7,9 +7,8 @@ REM
 REM  Requires: private.json in THIS folder (AGC -> Project settings
 REM  -> Service account; auto-scanned on start).
 REM
-REM  Optional hardening (uncomment; see docs/cloudfuctionticketenv.md):
-REM    set TICKET_RATE_LIMIT_IP=100
-REM    set TICKET_AUTO_BAN=5
+REM  Config lives in config.yml (auto-created on first start, hot-reloaded;
+REM  this bat sets NO env on purpose -- the bat->env chain was fragile).
 REM
 REM  Service stops when the window closes; re-run after VPS reboot.
 REM  For auto-start/crash-restart use nssm-ticket.bat instead.
@@ -30,8 +29,6 @@ if not exist "*.json" (
     exit /b
 )
 
-set PORT=12346
-set TICKET_TTL_SECONDS=600
-echo Starting Hotify CF-Ticket (anonymous, ttl=600s, port 12346)...
+echo Starting Hotify CF-Ticket (see config.yml for port/ttl/limits)...
 cf-ticket.exe
 pause

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"html"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,7 +109,7 @@ func takeStatsSnapshot() statsSnapshot {
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 	mode := "anonymous"
-	if os.Getenv("TICKET_AUTH_TOKEN") != "" {
+	if ticketAuthToken() != "" {
 		mode = "token-auth"
 	}
 	top := make([]statsIPCount, 0, len(stats.ips))
@@ -189,8 +188,8 @@ func consoleLang(r *http.Request) string {
 	return "zh" // 默认中文（用户主用）
 }
 
-// humanDur 顶栏人性化时长（取最高两档）：26h→"1 天 2 小时"，1h3m→"1 小时 3 分"，
-// 2m20s→"2 分 20 秒"，45s→"45 秒"（en：1d 2h / 1h 3m / 2m 20s / 45s）。Duration 原样太机器味。
+// humanDur 顶栏人性化时长（取最高两档，末位 0 省略）：26h→"1 天 2 小时"，1h3m→"1 小时 3 分"，
+// 10m→"10 分钟"（不带"0 秒"），45s→"45 秒"。Duration 原样太机器味。
 func humanDur(d time.Duration, lang string) string {
 	zh := lang == "zh"
 	u := func(n int, z, e string) string {
@@ -202,15 +201,30 @@ func humanDur(d time.Duration, lang string) string {
 	totalSec := int(d.Seconds())
 	days, hours := totalSec/86400, totalSec%86400/3600
 	mins, secs := totalSec%3600/60, totalSec%60
+	pick := func(parts ...string) string {
+		var out []string
+		for _, p := range parts {
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	mz := u(mins, "分钟", "m")
+	if zh && mins > 0 {
+		mz = strconv.Itoa(mins) + " 分钟"
+	}
+	sec := u(secs, "秒", "s")
+	minShort := u(mins, "分", "m")
 	switch {
 	case days > 0:
-		return u(days, "天", "d") + " " + u(hours, "小时", "h")
+		return pick(u(days, "天", "d"), u(hours, "小时", "h"))
 	case hours > 0:
-		return u(hours, "小时", "h") + " " + u(mins, "分", "m")
+		return pick(u(hours, "小时", "h"), minShort)
 	case mins > 0:
-		return u(mins, "分", "m") + " " + u(secs, "秒", "s")
+		return pick(mz, sec)
 	default:
-		return u(secs, "秒", "s")
+		return sec
 	}
 }
 
@@ -231,18 +245,24 @@ func handleConsole(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, consoleHTML(snap, consoleLang(r)))
 }
 
-// consoleHTML Tabler 单页（骨架照 NEXT-Server /console 同款：page/navbar/card/datagrid）。
+// consoleHTML Tabler 单页（骨架照 NEXT-Server /console 同款；卡片平铺=row-deck 栅格，
+// 手机 col-6 两列 / 桌面 col-lg-3 四列——Tabler dashboard 标准形态）。
 func consoleHTML(s statsSnapshot, lang string) string {
 	c := consoleCopy[lang]
 	mode := c["anon"]
 	if s.Mode == "token-auth" {
 		mode = c["tokenauth"]
 	}
-	stat := func(label string, val string, cls string) string {
-		return `<div class="datagrid"><div class="datagrid-item"><div class="datagrid-content"><div class="text-secondary fs-2">` + label + `</div><div class="fs-1 ` + cls + `">` + val + `</div></div></div></div>`
+	// statCard 平铺卡片：subheader 小灰题 + 大数字 + 右上角 code 角标（状态卡）。
+	statCard := func(label, val, cls, badge string) string {
+		tag := ""
+		if badge != "" {
+			tag = `<span class="badge bg-secondary-lt ms-2">` + badge + `</span>`
+		}
+		return `<div class="col-6 col-lg-3"><div class="card card-sm"><div class="card-body"><div class="subheader">` + label + tag + `</div><div class="h1 mb-0 mt-2 ` + cls + `">` + val + `</div></div></div></div>`
 	}
-	statusCell := func(code int, label string, cls string) string {
-		return stat(label, strconv.FormatInt(s.Status[code], 10), cls)
+	statusCard := func(code int, label, cls string) string {
+		return statCard(label, strconv.FormatInt(s.Status[code], 10), cls, strconv.Itoa(code))
 	}
 	ipRows := strings.Builder{}
 	for _, t := range s.TopIPs {
@@ -265,7 +285,7 @@ func consoleHTML(s statsSnapshot, lang string) string {
 <meta http-equiv="refresh" content="5;url=?lang=` + lang + `">
 <title>` + c["title"] + `</title>
 <link rel="stylesheet" href="/tabler.min.css">
-</head><body>
+</head><body class="theme-light">
 <div class="page">
 <nav class="navbar navbar-expand-md navbar-light">
   <div class="container-xl">
@@ -274,17 +294,16 @@ func consoleHTML(s statsSnapshot, lang string) string {
   </div>
 </nav>
 <div class="page-wrapper"><div class="page-body"><div class="container-xl">
-<div class="card card-md mb-3">
-  <div class="card-body">` +
-	stat(c["total"], strconv.FormatInt(s.Issued, 10), "") +
-	stat(c["today"], strconv.FormatInt(s.IssuedToday, 10), "") +
-	statusCell(200, c["ok"], "text-blue") +
-	statusCell(401, c["auth"], "text-orange") +
-	statusCell(403, c["ban"], "text-orange") +
-	statusCell(429, c["limit"], "text-orange") +
-	statusCell(500, c["err"], "text-red") +
-	stat(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary") +
-	`</div></div>
+<div class="row row-deck row-cards mb-3">` +
+	statCard(c["total"], strconv.FormatInt(s.Issued, 10), "", "") +
+	statCard(c["today"], strconv.FormatInt(s.IssuedToday, 10), "", "") +
+	statusCard(200, c["ok"], "text-blue") +
+	statusCard(401, c["auth"], "text-orange") +
+	statusCard(403, c["ban"], "text-orange") +
+	statusCard(429, c["limit"], "text-orange") +
+	statusCard(500, c["err"], "text-red") +
+	statCard(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary", "") +
+	`</div>
 <div class="card card-md mb-3">
   <div class="card-header"><h3 class="card-title">` + c["topip"] + `</h3></div>
   <div class="table-responsive"><table class="table table-vcenter card-table">` + ipRows.String() + `</table></div>

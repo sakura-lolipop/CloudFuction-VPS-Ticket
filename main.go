@@ -68,7 +68,8 @@ const tokenURI = "https://oauth-login.cloud.huawei.com/oauth2/v3/token" // JWT a
 var nowFn = time.Now
 
 func main() {
-	addr := envStr("HOST", "127.0.0.1") + ":" + envStr("PORT", "12346")
+	ensureConfigFile() // 首次启动生成带注释的默认 config.yml（自文档）
+	addr := orDefault(cfgGet("host"), "127.0.0.1") + ":" + orDefault(cfgGet("port"), "12346") // 静态：改 config.yml 的 host/port 要重启
 
 	// 三腿（对齐 NEXT-Server log.md 模式）：stdout 着色渲染（TTY 才开色）+ logs\ticket.log 原样
 	// 纯文本（ANSI 不落盘、grep 友好）+ ring（/stats 面板黑窗回放）。文件腿打不开退 stdout-only。
@@ -94,7 +95,7 @@ func main() {
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		mode := "anonymous"
-		if os.Getenv("TICKET_AUTH_TOKEN") != "" {
+		if ticketAuthToken() != "" {
 			mode = "token-auth"
 		}
 		acct, err := loadSA()
@@ -141,7 +142,7 @@ func resolveIdentity(r *http.Request) (identity, bool) {
 	if ip := clientIP(r); ip != "" {
 		id.ipKey = "ip:" + ip
 	}
-	tok := os.Getenv("TICKET_AUTH_TOKEN")
+	tok := ticketAuthToken()
 	if tok == "" {
 		return id, true // 匿名开放（当前默认，2026-08-25 裁定）
 	}
@@ -236,13 +237,14 @@ func banRemain(key string) time.Duration {
 	return 0
 }
 
-// resetGuard 清策略状态（测试隔离用）。
+// resetGuard 清策略状态（测试隔离用；顺带隔离 config 缓存）。
 func resetGuard() {
 	guardMu.Lock()
 	defer guardMu.Unlock()
 	rateBuckets = nil
 	strikes = nil
 	bannedUntil = nil
+	cfgReset()
 }
 
 // ── 票据签发 handler ──
@@ -453,49 +455,32 @@ func resolvePrivateJSON() string {
 	return ""
 }
 
-// ── env 小件 ──
+// ── 配置小件（config.yml > env > 默认，见 config.go；除 port/host 外全热加载）──
 
-func ticketTTLSeconds() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_TTL_SECONDS"))); err == nil && v > 0 && v <= 3600 {
-		return v
-	}
-	return 600
-}
+func ticketTTLSeconds() int { return cfgInt("ttl", 600, 3600) }
 
-func ticketRateLimitIP() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_RATE_LIMIT_IP"))); err == nil && v > 0 {
-		return v
-	}
-	return 0 // 默认关
-}
-
-func ticketRateLimitToken() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_RATE_LIMIT_TOKEN"))); err == nil && v > 0 {
-		return v
-	}
-	return 0 // 默认关
-}
-
-func ticketAutoBan() int {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_AUTO_BAN"))); err == nil && v > 0 {
-		return v
-	}
-	return 0 // 默认关
-}
+func ticketRateLimitIP() int    { return cfgInt("rate_limit_ip", 0, 0) }
+func ticketRateLimitToken() int { return cfgInt("rate_limit_token", 0, 0) }
+func ticketAutoBan() int        { return cfgInt("auto_ban", 0, 0) }
 
 // autoBanTTL 封禁时长=strikes 窗口（相等→解封时旧 strikes 全部出窗=白纸从零开始）。
 func autoBanTTL() time.Duration {
-	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TICKET_AUTO_BAN_SECONDS"))); err == nil && v >= 1 {
-		return time.Duration(v) * time.Second
+	v := cfgInt("auto_ban_seconds", 600, 0)
+	if v < 1 {
+		v = 600
 	}
-	return 600 * time.Second
+	return time.Duration(v) * time.Second
 }
 
 func autoBanWindow() time.Duration { return autoBanTTL() }
 
-func envStr(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+// ticketAuthToken 铸票鉴权 token（空=匿名开放）。resolveIdentity/console 共用。
+func ticketAuthToken() string { return cfgGet("auth_token") }
+
+// orDefault s 非空返 s 否则 def。
+func orDefault(s, def string) string {
+	if strings.TrimSpace(s) != "" {
+		return strings.TrimSpace(s)
 	}
 	return def
 }

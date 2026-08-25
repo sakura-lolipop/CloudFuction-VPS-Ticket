@@ -36,7 +36,8 @@ echo --- Installing HotifyTicketCF (cf-ticket, anonymous mode) ---
 "%NSSM%" install HotifyTicketCF "%cd%\cf-ticket.exe"
 "%NSSM%" set HotifyTicketCF AppDirectory "%cd%"
 REM defaults = anonymous + TTL 600; tighten here if needed
-"%NSSM%" set HotifyTicketCF AppEnvironmentExtra PORT=12346 TICKET_TTL_SECONDS=600
+REM config lives in config.yml (auto-created, hot-reloaded); no env here on purpose
+REM "%NSSM%" set HotifyTicketCF AppEnvironmentExtra PORT=12346 TICKET_TTL_SECONDS=600
 "%NSSM%" set HotifyTicketCF Start SERVICE_AUTO_START
 "%NSSM%" set HotifyTicketCF AppStdout "%cd%\logs\nssm-ticket.log"
 "%NSSM%" set HotifyTicketCF AppStderr "%cd%\logs\nssm-ticket.log"
