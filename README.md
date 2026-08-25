@@ -30,16 +30,27 @@ body: {target, payload, pushOptions}    # 华为 v3 原生格式
 - 票在 `expires_at` 前有效，**提前 60s 刷新**（margin 防边界）。
 - 每个节点签出的票带**本节点 SA 的 project_id**——票与节点配套，切节点须重新拿票（project_id 一起换）。
 
-## 部署（自有 VPS）
+## 部署（自有 VPS，Windows 实况）
 
-1. 交叉编译：`GOOS=linux GOARCH=amd64 go build -o cf-ticket .`（Windows 侧编译 Linux 件）
-2. 上传 `cf-ticket` 二进制 + 你的 `private.json`（华为 AGC → 项目设置 → 服务账号，**放同目录**会被自动扫描）
-3. env：
-   - `TICKET_AUTH_TOKEN`：随机长串（**独立于**任何中继 token；空=不鉴权，不建议）
-   - `TICKET_TTL_SECONDS`：默认 300（华为对 exp 下限的态度以实测为准）
-4. 进程守护（Windows 用 NSSM / Linux 用 systemd），默认监听 `127.0.0.1:8091`
-5. 反代/Tunnel 暴露：Cloudflare Tunnel 加 hostname 指向 8091 即可（证书自动）
-6. 验证：`curl -H "Authorization: Bearer <token>" https://<你的域名>/` → 拿到三字段 JSON
+与 go-harmony 中继同机共存的部署方式（go-harmony 服务原样不动，cf-ticket 独立进程+独立端口）：
+
+1. **编译**（Windows VPS 直接原生件）：本仓目录 `go build -o cf-ticket.exe .`
+2. **建独立目录**（如 `C:\hotify\cf-ticket\`）：放 `cf-ticket.exe` + `nssm-ticket.bat` + 你的 `private.json`（华为 AGC → 项目设置 → 服务账号；同目录自动扫描；与 go-harmony 各持一份副本，SA 轮换互不牵连）
+3. **NSSM 注册**：管理员运行 `nssm-ticket.bat`（装 `HotifyTicketCF` 服务，匿名模式 + TTL 600，env 在脚本里改）
+4. **Tunnel 复用**：不动现有 `HotifyTunnel` 服务，只改它的 `config.yml` 加一条 ingress 后重启服务：
+   ```yaml
+   ingress:
+     - hostname: push.hotify.love
+       service: http://127.0.0.1:12345     # 旧中继，原样
+     - hostname: ticket.hotify.love        # 新增：铸票
+       service: http://127.0.0.1:8091
+     - service: http_status:404
+   ```
+   DNS 一次性：`cloudflared.exe tunnel route dns hotify ticket.hotify.love`（或 CF 控制台加 CNAME）
+5. **验证**：本机 `curl http://localhost:8091/` → 三字段 JSON；外网 `curl https://ticket.hotify.love/` 同
+6. （可选，DoS 真防线）CF 控制台给 `ticket.hotify.love` 开一条免费限速规则
+
+Linux VPS 等价：`go build` + systemd + 任意反代指到 8091，逻辑相同。
 
 ## 鉴权与滥用策略（演进中，2026-08-25 设计定稿）
 
