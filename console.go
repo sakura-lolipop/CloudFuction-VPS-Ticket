@@ -175,6 +175,20 @@ func handleConsoleIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(hotifyIcon)
 }
 
+// cardIcon 卡片标题图标（Tabler icons 风格内联 stroke SVG，零外部依赖；治"卡头一行小字浮着空"）。
+func cardIcon(name string) string {
+	var path string
+	switch name {
+	case "list":
+		path = `<path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M5 6v.01"/><path d="M5 12v.01"/><path d="M5 18v.01"/>`
+	case "terminal":
+		path = `<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>`
+	default:
+		return ""
+	}
+	return `<svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler me-2" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.375rem">` + path + `</svg>`
+}
+
 // consoleCopy i18n 文案（zh 默认 / en；?lang= 切换。2026-08-25 对抗审终稿：
 // label 不带状态码——badge 是唯一码源；en 弃日志 ASCII 字形（ERR/BAN）用互译人话）。
 var consoleCopy = map[string]map[string]string{
@@ -385,12 +399,12 @@ func consoleHTML(s statsSnapshot, lang string, host string, rawQuery string, ref
 	statCard(c["autoban"], strconv.FormatInt(s.Bans, 10), "text-secondary", "", "") +
 	`</div>
 <div class="card card-sm mb-3">
-  <div class="card-header"><h3 class="card-title">` + c["topip"] + `</h3></div>
+  <div class="card-header"><h3 class="card-title">` + cardIcon("list") + c["topip"] + `</h3></div>
   <div class="card-table table-responsive"><table class="table table-vcenter">
   <thead><tr><th>` + c["iphead"] + `</th><th class="text-end">` + c["counthead"] + `</th></tr></thead>` + ipRows.String() + `</table></div>
 </div>
 <div class="card card-sm">
-  <div class="card-header"><h3 class="card-title">` + c["recent"] + `</h3><div class="card-actions">` + refreshBtns + `</div></div>
+  <div class="card-header"><h3 class="card-title">` + cardIcon("terminal") + c["recent"] + `</h3><div class="card-actions">` + refreshBtns + `</div></div>
   <div class="card-body"><pre class="mb-0" style="background:#1e1e1e;color:#d4d4d4;border-radius:6px;padding:12px;font:12px/1.6 Consolas,Monaco,monospace;overflow-y:auto;max-height:300px;white-space:pre-wrap;word-break:break-all">` + logLines.String() + `</pre></div>
 </div>
 </div></div></div>
