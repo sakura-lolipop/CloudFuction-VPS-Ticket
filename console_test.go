@@ -31,7 +31,11 @@ func TestConsoleNoPanic(t *testing.T) {
 func TestConsoleCopyKeysLocked(t *testing.T) {
 	used := []string{"title", "brand", "uptime", "ttl", "anon", "tokenauth", "total", "today",
 		"ok", "auth", "ban", "limit", "err", "autoban", "topip", "recent", "iphead", "counthead",
-		"refresh", "autorefresh", "autorefreshon", "empty", "switch"}
+		"refresh", "autorefresh", "autorefreshon", "empty", "switch",
+		// 2026-08-30 lookinggood：胶囊+光感面板+壁纸新键（CJ 注入 JS 侧消费）；
+		// 08-30 二轮 server 对齐：ds 滑杆入注册表
+		"pause", "theme", "bgshow", "bghide", "lptitle", "gain", "edge", "radius", "ds",
+		"color", "blob", "reset", "themedark", "themelight"}
 	for _, lang := range []string{"zh", "en"} {
 		for _, key := range used {
 			if consoleCopy[lang][key] == "" {
@@ -51,16 +55,28 @@ func TestConsoleTitlesRender(t *testing.T) {
 	}
 }
 
-// TestRefreshResumeNotStuck 暂停页恢复链接必须去掉 refresh=0（pageQuery nil 不删键=死路）。
+// TestRefreshResumeNotStuck 2026-08-30 增量刷新版：禁 meta 整页刷新回归；
+// 暂停态改走 localStorage（cf2-console-paused）+ ?refresh=0 显式 URL 压过记忆，两通道都要在 JS 里。
 func TestRefreshResumeNotStuck(t *testing.T) {
 	snap := statsSnapshot{UptimeDur: time.Minute, TTL: 600}
-	body := consoleHTML(snap, "zh", "t", "refresh=0", 0)
-	if n := strings.Count(body, `href="?refresh=0"`); n >= 2 {
-		t.Fatalf("暂停页 %d 处 ?refresh=0（恢复按钮应 Del refresh 回落默认）", n)
+	for _, q := range []string{"refresh=0", "refresh=5", ""} {
+		body := consoleHTML(snap, "zh", "t", q, 0)
+		if strings.Contains(body, `http-equiv="refresh"`) {
+			t.Fatalf("q=%s 出现 meta refresh——增量刷新版禁整页刷新回归", q)
+		}
+		if !strings.Contains(body, `cf2-console-paused`) {
+			t.Fatalf("q=%s 缺 localStorage 暂停记忆通道", q)
+		}
+		if !strings.Contains(body, `fetch('?json=1')`) {
+			t.Fatalf("q=%s 缺 ?json=1 轮询", q)
+		}
 	}
-	if !strings.Contains(body, `href="?refresh=5"`) && !strings.Contains(body, `href="?"`) {
-		// 恢复按钮 href 应为去掉 refresh 的 query（空则 "?" 或裸页）
-		t.Logf("resume link form check: body contains href without refresh=0")
+	// REFRESH_URL 线程：显式 ?refresh=0 → JS 判暂停走 URL 不走 localStorage
+	if !strings.Contains(consoleHTML(snap, "zh", "t", "refresh=0", 0), `REFRESH_URL=true`) {
+		t.Fatalf("显式 ?refresh=0 未传 REFRESH_URL=true")
+	}
+	if !strings.Contains(consoleHTML(snap, "zh", "t", "", 5), `REFRESH_URL=false`) {
+		t.Fatalf("无 refresh 参数应传 REFRESH_URL=false（JS 读 localStorage）")
 	}
 }
 
@@ -86,11 +102,29 @@ func TestHumanDurZeroOmit(t *testing.T) {
 	}
 }
 
-// TestIPv6HostBadge IPv6 literal host 不切坏。
+// TestIPv6HostBadge IPv6 literal host 不切坏（SplitHostPort 截端口剥括号，pill 显示净 ::1）。
 func TestIPv6HostBadge(t *testing.T) {
 	snap := statsSnapshot{UptimeDur: time.Minute, TTL: 600}
-	if body := consoleHTML(snap, "zh", "[::1]:12346", "", 5); strings.Contains(body, `bg-blue-lt">`+"[") {
-		t.Fatalf("IPv6 host 被切成裸 [")
+	body := consoleHTML(snap, "zh", "[::1]:12346", "", 5)
+	if !strings.Contains(body, `<span class="hostpill">::1</span>`) {
+		t.Fatalf("IPv6 host pill 应为净 ::1（端口截掉、不出裸 [）")
+	}
+}
+
+// TestLineLightRegistryLocked 分隔线受光家族注册单一真相（2026-09-01 用户报 .hr/card-header 无光
+// =线家族只有 #ipbody tr 一个成员,其余线没人管）：线通道名单是渲染器内唯一注册表,锁成员防静默删
+// （grep gate 惯例——prose 不设防）。
+func TestLineLightRegistryLocked(t *testing.T) {
+	snap := statsSnapshot{UptimeDur: time.Minute, TTL: 600}
+	body := consoleHTML(snap, "zh", "t", "", 5)
+	for _, anchor := range []string{
+		`SEL_ROW='#ipbody tr'`,
+		`SEL_LINE_TOP='.hr'`,
+		`SEL_LINE_BOT='.card-header, .card-table thead th'`,
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Fatalf("分隔线注册表缺 %q——线家族名单变更要过目", anchor)
+		}
 	}
 }
 

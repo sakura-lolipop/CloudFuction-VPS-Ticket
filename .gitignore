@@ -6,6 +6,10 @@ config.local.*
 # 产物
 cf-ticket
 cf-ticket.exe
+cloudfuction-vps-ticket.exe
+
+# demo 生成物（GENDEMO=1 go test -run TestGenerateDemo 重建）
+demo*.html
 
 # 运行产物
 logs/
