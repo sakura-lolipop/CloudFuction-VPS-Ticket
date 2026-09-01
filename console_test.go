@@ -145,6 +145,23 @@ func TestThemeTransitionLocked(t *testing.T) {
 	}
 }
 
+// TestUptimeLocalTick 运行时长本地计时构件（2026-09-01 用户裁定）：SSR 锚 data-sec + 每秒
+// 本地推算 + poll 重锚——防退化回「轮询才动/暂停冻结」。
+func TestUptimeLocalTick(t *testing.T) {
+	snap := statsSnapshot{UptimeDur: time.Minute, UptimeSec: 60, TTL: 600}
+	body := consoleHTML(snap, "zh", "t", "", 5)
+	for _, anchor := range []string{
+		`id="v-uptime" data-sec="60"`,
+		`function tickUptime`,
+		`setInterval(tickUptime,1000)`,
+		`upSec=d.uptime_sec`,
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Fatalf("运行时长本地计时段 %q——锚点/走表/重锚被改掉要过目", anchor)
+		}
+	}
+}
+
 // TestTicketTTLFloor ttl 下限 1（0=出生即过期的死票）。
 func TestTicketTTLFloor(t *testing.T) {
 	if v := ticketTTLSeconds(); v < 1 {

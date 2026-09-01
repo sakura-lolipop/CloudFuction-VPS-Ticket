@@ -600,7 +600,7 @@ html.noblend #light-canvas{mix-blend-mode:normal} /* ?light=noblend 消融（ser
   </div>
   <div class="meta">
     <span>` + icon("globe", 14) + ` ` + html.EscapeString(host) + `</span>
-    <span>` + icon("clock", 14) + ` <span id="v-uptime">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span></span>
+    <span>` + icon("clock", 14) + ` <span id="v-uptime" data-sec="` + strconv.FormatInt(s.UptimeSec, 10) + `">` + c["uptime"] + ` ` + humanDur(s.UptimeDur, lang) + `</span></span>
     <span>` + icon("ticket", 14) + ` ` + c["ttl"] + ` ` + humanTTL(s.TTL, lang) + `</span>
     <span>` + icon("terminal", 14) + ` ` + c["project"] + ` ` + maskProject(s.ProjectID) + `</span>
   </div>
@@ -765,6 +765,13 @@ function setVal(id,v,noflash){var el=$(id);v=String(v);
   if(el&&el.textContent!==v){el.textContent=v;
     if(!noflash){el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash')}}}
 function setCell(code,n){n=n||0;setVal('sc-'+code+'-n',humanCount(n));$('sc-'+code).classList.toggle('dim',!n)}
+/* ── 运行时长本地计时（2026-09-01 用户裁定：轮询间隔内数字不动/暂停即冻结=ux 差）──
+   锚点=SSR data-sec（或最近 poll 的 uptime_sec）+取数时刻；每秒本地推算走表；poll 顺带重锚
+   （零额外请求，治传输时延漂移）；暂停数据轮询不影响走表——时长是墙钟不是数据。 */
+var upSec=parseFloat($('v-uptime').getAttribute('data-sec')||'0')||0,upAt=Date.now();
+function tickUptime(){setVal('v-uptime',CJ.uptime+' '+humanDur(upSec+(Date.now()-upAt)/1000),true)}
+tickUptime();
+setInterval(tickUptime,1000);
 /* TopIP keyed 更新：行以 ip 为键原地改数/挪序/增删，禁整表重建——
    重建会杀掉行上的光效 lit 态(2026-08-30 实测:demo 每 5s 重建=光斑反复消失误判"错乱") */
 function syncIPs(ips){
@@ -795,7 +802,7 @@ function syncIPs(ips){
 function poll(){
   fetch('?json=1').then(function(r){return r.json()}).then(function(d){
     setVal('v-total',humanCount(d.issued));setVal('v-today','+'+humanCount(d.issued_today));
-    setVal('v-uptime',CJ.uptime+' '+humanDur(d.uptime_sec||0),true);
+    if(d.uptime_sec){upSec=d.uptime_sec;upAt=Date.now()} /* 运行时长重锚，本地计时续走 */
     var st=d.status||{};
     setCell(401,st['401']);setCell(403,st['403']);setCell(429,st['429']);setCell(500,st['500']);
     setVal('sc-ban-n',humanCount(d.bans||0));$('sc-ban').classList.toggle('dim',!d.bans);
