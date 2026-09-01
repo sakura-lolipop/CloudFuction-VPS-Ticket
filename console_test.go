@@ -128,6 +128,23 @@ func TestLineLightRegistryLocked(t *testing.T) {
 	}
 }
 
+// TestThemeTransitionLocked 主题切换 VT 圆形揭示构件（server 2026-09-01 终态同构）——
+// keyframes/VT API/坐标变量/视觉视口修正四件套锚点，防静默退化回硬切。
+func TestThemeTransitionLocked(t *testing.T) {
+	snap := statsSnapshot{UptimeDur: time.Minute, TTL: 600}
+	body := consoleHTML(snap, "zh", "t", "", 5)
+	for _, anchor := range []string{
+		`@keyframes vt-circle`,
+		`startViewTransition(apply)`,
+		`--vt-r`,
+		`visualViewport`,
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Fatalf("主题切换动画构件缺 %q——VT 圆形揭示被改掉要过目", anchor)
+		}
+	}
+}
+
 // TestTicketTTLFloor ttl 下限 1（0=出生即过期的死票）。
 func TestTicketTTLFloor(t *testing.T) {
 	if v := ticketTTLSeconds(); v < 1 {

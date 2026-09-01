@@ -474,9 +474,11 @@ html[data-bs-theme=dark]{
 }
 /* 壁纸层（05-bing 同构）：照片+纱；关=同 opacity 过渡淡出（不硬切） */
 #bg-photo{position:fixed;inset:0;z-index:-2;background-size:cover;background-position:center;
-  opacity:0;transition:opacity .8s ease;filter:saturate(.85)}
+  opacity:0;transition:opacity 2s ease-in;filter:saturate(.85)}
 #bg-photo.loaded{opacity:1}
-#bg-scrim{position:fixed;inset:0;z-index:-1;background:var(--scrim);pointer-events:none;transition:opacity .8s ease}
+#bg-scrim{position:fixed;inset:0;z-index:-1;background:var(--scrim);pointer-events:none;transition:opacity 2s ease-in}
+/* 两层同时长同曲线（server 校准：异曲线中途有裸照窗；主题切换动画走 VT 快照——曾试 scrim
+   色补间+全页通配 transition，用户两轮报撕裂感，server 已删不搬） */
 #bg-photo.bg-off,#bg-scrim.bg-off{opacity:0}
 .wrap{max-width:72rem;margin:0 auto;padding:18px 16px 64px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
@@ -533,7 +535,18 @@ input[type=range]{accent-color:var(--tblr-primary)}
 @media (max-width:767.98px){#light-panel{top:auto!important;bottom:.5rem;left:.5rem;right:.5rem;width:auto}}
 @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .view-in{animation:viewIn .18s ease-out}
+/* 主题切换动画：View Transitions 圆形揭示（server 2026-09-01 终态同构：新态从点击处扩圆盖掉
+   旧态，双向统一扩圆——入暗收圆曾有「被吸向顶栏」观感弃用；动画住 CSS keyframes 生命周期浏览器
+   托管，坐标经 --vt-x/y/r 由 JS 写入——WAAPI 持 VT 伪元素引用=Edge 狂点 UAF 崩，已根治） */
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-new(root){
+  z-index:9999;
+  animation:vt-circle .3s ease-out both}
+@keyframes vt-circle{
+  from{clip-path:circle(0px at var(--vt-x,50%) var(--vt-y,50%))}
+  to{clip-path:circle(var(--vt-r,150vmax) at var(--vt-x,50%) var(--vt-y,50%))}}
 @media (prefers-reduced-motion:reduce){.row-in,.flash,.view-in{animation:none!important}
+  ::view-transition-group(*),::view-transition-old(*),::view-transition-new(*){animation:none!important}
   #bg-photo,#bg-scrim{transition:none!important}}
 /* ── 沉浸光感·全局 Canvas 层（server 15-light.js 同构 2026-08-30 对齐）：四通道渲染唯一在
    JS 绘制循环画进 #light-canvas；.lit/.lit-row 纯注册标记（CSS 零受光渲染）；z 随域切
@@ -645,12 +658,45 @@ var $=function(i){return document.getElementById(i)};
 /* ── 主题（FOUC 已在 head 抢钉；此处只管切换+图标）── */
 function curTheme(){return document.documentElement.getAttribute('data-bs-theme')==='dark'?'dark':'light'}
 function paintTheme(){var d=curTheme()==='dark';$('ic-moon').classList.toggle('is-off',d);$('ic-sun').classList.toggle('is-off',!d)}
-$('btn-theme').addEventListener('click',function(){
-  var t=curTheme()==='dark'?'light':'dark';
-  document.documentElement.setAttribute('data-bs-theme',t);
-  try{localStorage.setItem('hotify-theme',t)}catch(e){}
-  paintTheme();
-  /* 光感档分主题记忆的重应用在光感面板 IIFE 挂第二监听（server 同款：注册序即调用序） */
+var themeVTBusy=false;
+$('btn-theme').addEventListener('click',function(ev){
+  if(themeVTBusy)return;
+  var h=document.documentElement,dark=curTheme()==='dark';
+  var apply=function(){
+    h.setAttribute('data-bs-theme',dark?'light':'dark');
+    try{localStorage.setItem('hotify-theme',dark?'light':'dark')}catch(e){}
+    paintTheme();
+    if(window.CF2ThemeApplied)window.CF2ThemeApplied() /* attr 真翻转后回调（CF2 修正：server 版
+      setTimeout(0) 第二监听在 VT 下先于 apply 跑=读旧主题，潜伏错一档） */
+  };
+  if(!document.startViewTransition||
+     (window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)){apply();return}
+  /* tap 坐标减 visualViewport 偏移（地址栏展开时 VT 快照锚 layout 空间，不减圆心画进地址栏后） */
+  var st=h.style,vv=window.visualViewport;
+  var vx=(ev.clientX||innerWidth/2)-(vv?vv.offsetLeft:0);
+  var vy=(ev.clientY||innerHeight/2)-(vv?vv.offsetTop:0);
+  st.setProperty('--vt-x',vx+'px');
+  st.setProperty('--vt-y',vy+'px');
+  st.setProperty('--vt-r',Math.hypot(Math.max(vx,innerWidth-vx),Math.max(vy,innerHeight-vy))+'px');
+  if(/[?&]vtdebug=1/.test(location.search)){ /* 真机自诊通道（?light= 同惯例；server 走 core toast，
+    CF2 无 toast 基建=最小 fixed div 变体） */
+    var br=this.getBoundingClientRect();
+    setTimeout(function(){
+      var d=document.createElement('div');
+      d.textContent='vtdebug tap('+Math.round(ev.clientX)+','+Math.round(ev.clientY)+') btn('+
+        Math.round(br.x)+','+Math.round(br.y)+','+Math.round(br.width)+'x'+Math.round(br.height)+') vv('+
+        (window.visualViewport?Math.round(visualViewport.scale*100)/100+','+Math.round(visualViewport.offsetLeft)+','+Math.round(visualViewport.offsetTop):'n/a')+')';
+      d.style.cssText='position:fixed;left:8px;top:8px;z-index:3000;font:11px/1.5 monospace;'+
+        'background:rgba(0,0,0,.75);color:#8fd;padding:6px 8px;border-radius:6px;max-width:90vw';
+      document.body.appendChild(d);
+      setTimeout(function(){d.remove()},4000);
+    },320);
+  }
+  themeVTBusy=true;
+  document.startViewTransition(apply).finished.finally(function(){
+    themeVTBusy=false;
+    st.removeProperty('--vt-x');st.removeProperty('--vt-y');st.removeProperty('--vt-r');
+  });
 });
 paintTheme();
 /* ── 壁纸（05-bing 移植：旧图先行/当日缓存/朝向派生裁切/开关 opacity 过渡）── */
@@ -874,7 +920,8 @@ document.addEventListener('click',function(e){var p=$('light-panel');
   if(p.classList.contains('is-off'))return;
   if(p.contains(e.target)||e.target.closest('#btn-palette'))return;
   p.classList.add('is-off')});
-$('btn-theme').addEventListener('click',function(){setTimeout(lpApply,0)}); /* 排在既有切主题 handler 后（注册序即调用序） */
+window.CF2ThemeApplied=lpApply; /* 分主题档重应用：主题切换器在 attr 真翻转后回调（VT 时序正确；
+  server 版 setTimeout(0) 第二监听在 VT 下先于 apply 跑=读旧主题） */
 $('lp-reset').addEventListener('click',function(){delete lpPref[lpTheme()];delete lpPref.blob;lpCommit()});
 lpApply(); /* 启动即应用记忆档 */
 })();
