@@ -671,13 +671,20 @@ $('btn-theme').addEventListener('click',function(ev){
   };
   if(!document.startViewTransition||
      (window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches)){apply();return}
-  /* tap 坐标减 visualViewport 偏移（地址栏展开时 VT 快照锚 layout 空间，不减圆心画进地址栏后） */
+  /* tap 坐标减 visualViewport 偏移（地址栏展开时 VT 快照锚 layout 空间，不减圆心画进地址栏后）。
+     ①仅 scale===1（动态 chrome）才减：pinch-zoom 2x 原位实测不减已准，减了反偏；
+     ②半径加余量：盒（layout）可比可视视口高出一截地址栏，按可视算的半径到边缘差一圈=旧色
+     残边一闪——恒定余量盖满盒，clip 超出盒自动裁无副作用（server 2a321d5 同步） */
   var st=h.style,vv=window.visualViewport;
-  var vx=(ev.clientX||innerWidth/2)-(vv?vv.offsetLeft:0);
-  var vy=(ev.clientY||innerHeight/2)-(vv?vv.offsetTop:0);
+  var off=(vv&&vv.scale===1)?vv:null;
+  var vx=(ev.clientX||innerWidth/2)-(off?off.offsetLeft:0);
+  var vy=(ev.clientY||innerHeight/2)-(off?off.offsetTop:0);
+  var vr=Math.max(
+    Math.hypot(Math.max(vx,innerWidth-vx),Math.max(vy,innerHeight-vy)),
+    Math.hypot(innerWidth,innerHeight)+160);
   st.setProperty('--vt-x',vx+'px');
   st.setProperty('--vt-y',vy+'px');
-  st.setProperty('--vt-r',Math.hypot(Math.max(vx,innerWidth-vx),Math.max(vy,innerHeight-vy))+'px');
+  st.setProperty('--vt-r',vr+'px');
   if(/[?&]vtdebug=1/.test(location.search)){ /* 真机自诊通道（?light= 同惯例；server 走 core toast，
     CF2 无 toast 基建=最小 fixed div 变体） */
     var br=this.getBoundingClientRect();
